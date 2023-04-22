@@ -1,0 +1,139 @@
+#!/bin/bash
+
+declare -A device_bssid=(
+   ['f4:92:bf:70:0d:6e']='UDM'
+   ['f4:92:bf:70:0d:6f']='UDM'
+   ['74:ac:b9:59:53:ee']='UAP'
+   ['74:ac:b9:59:53:ed']='UAP'
+)
+
+declare -a LINES=()
+declare -i TIME=4
+declare -- SSID
+declare -l BSSID
+
+SSID=$(  iwgetid -r  )
+BSSID=$( iwgetid -ra )
+
+device="${device_bssid[${BSSID:-_}]}"
+device="${device:-${BSSID}}"
+
+
+function usage {
+cat <<EOF
+usage: ${BASH_SOURCE[0]##*/} [option] [param]
+
+option:
+   -h | --help       show this message and exit
+   -s | --show       display currently connected AP
+   -l | --list       display BSSID options for current SSID
+   -r | --roam       launch rofi, choose BSSID, roam to it
+
+params:
+   -w | --wait INT   sleep <INT> seconds after scanning before
+                     getting \`wpa_cli scan_results\`
+
+If no options are specified, runs with default:
+> roam -r -w 4
+   
+EOF
+exit "$1"
+}
+
+
+function wpa_scan {
+   # Don't currently know a better option than just sleeping while waiting for
+   # results. Unless I can have an intermediate menu to?
+   sudo wpa_cli scan >/dev/null ; sleep "$TIME"
+
+   mapfile -t LINES < <(
+      sudo wpa_cli scan_results           |
+      awk '/CALL-TUR/ {print $1 "\t" $3}' |
+      sort -k2
+   )
+}
+
+
+function wpa_roam {
+   for n in "${!LINES[@]}" ; do
+      [[ ${LINES[n]} =~ ([[:xdigit:]:]+) ]]
+      LINES[n]+=$'\t'
+      LINES[n]+="${device_bssid[${BASH_REMATCH[1]}]}"
+   done
+
+   params=(
+      -dmenu
+      -sep   '\n'
+      -p     "roam?"              #< prompt
+      -a     1                    #< mark 1st row as active
+      -mesg  "current::${wap}"
+   )
+   rv=$( printf '%s\n' "${LINES[@]}" | rofi "${params[@]}" ) || exit 0
+   awk '{print $1}' <<< "$rv" | xargs sudo wpa_cli roam
+}
+
+
+function wpa_results {
+   for n in "${!LINES[@]}" ; do
+      local line="${LINES[n]}"
+      printf '%s' "$line"
+
+      if [[ ${line} == "${BSSID}"* ]] ; then
+         printf ' <--'
+      fi
+
+      printf '\n'
+   done
+}
+
+
+declare -A actions=(
+   [list]=0
+   [show]=0
+   [scan]=1
+   [roam]=1
+)
+
+# Don't default `wpa_cli roam` when passing in parameters.
+if (( $# )) ; then
+   actions['roam']=0
+   actions['scan']=0
+fi
+
+while (( $# )) ; do
+   case "$1" in
+      -h | --help)
+            usage 0
+            ;;
+
+      -s | --show)
+            actions['show']=1 
+            shift
+            ;;
+
+      -l | --list) 
+            actions['scan']=1
+            actions['list']=1
+            shift
+            ;;
+
+      -r | --roam)
+            actions['scan']=1
+            actions['roam']=1
+            shift
+            ;;
+
+      -w | --wait)
+            shift ; TIME="$1" ; shift
+            ;;
+
+      *)    echo "Invalid param: $1"
+            exit 1
+            ;;
+   esac
+done
+
+(( actions[show] )) && echo "$device"
+(( actions[scan] )) && wpa_scan
+(( actions[list] )) && wpa_results
+(( actions[roam] )) && wpa_roam
