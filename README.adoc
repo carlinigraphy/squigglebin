@@ -1,3 +1,10 @@
 = ~/bin/
 
 A home for my squigglebin; all one-off utilities not needing their own dedicated repo.
+
+
+== roam
+Laptop is bad at WAP handoffs between my bedroom and office.
+Needed a way to force it over to the correct one.
+
+This gives a quick CLI, TUI, or graphical approach.
