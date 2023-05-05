@@ -1,139 +1,207 @@
 #!/bin/bash
+# shellcheck disable=SC2030,SC2031,SC2016
 
-declare -A device_bssid=(
+declare -A wap_bssid=(
    ['f4:92:bf:70:0d:6e']='UDM'
    ['f4:92:bf:70:0d:6f']='UDM'
    ['74:ac:b9:59:53:ee']='UAP'
    ['74:ac:b9:59:53:ed']='UAP'
 )
 
-declare -a LINES=()
-declare -i TIME=4
 declare -- SSID
 declare -l BSSID
+
+# Output lines of `wpa_scan results`.
+declare -a LINES=()
 
 SSID=$(  iwgetid -r  )
 BSSID=$( iwgetid -ra )
 
-device="${device_bssid[${BSSID:-_}]}"
-device="${device:-${BSSID}}"
+# Currently connected access point.
+WAP="${wap_bssid[${BSSID:-_}]}"
+WAP="${WAP:-${BSSID}}"
 
 
 function usage {
 cat <<EOF
-usage: ${BASH_SOURCE[0]##*/} [option] [param]
+usage: ${BASH_SOURCE[0]##*/} (BSSID | command [option])
 
-option:
-   -h | --help       show this message and exit
-   -s | --show       display currently connected AP
-   -l | --list       display BSSID options for current SSID
-   -r | --roam       launch rofi, choose BSSID, roam to it
+command:
+   help              show this message and exit
+   select            use \`select\` to choose BSSID, roam to it
+   rofi              use \`rofi\` to choose BSSID, roam to it
+   list              display BSSID options for current SSID
+   current           display currently connected WAP
 
-params:
-   -w | --wait INT   sleep <INT> seconds after scanning before
-                     getting \`wpa_cli scan_results\`
+options:
+   -c | --current     display currently connected AP
+   -w | --wait INT    sleep <INT> seconds after scanning before
+                      getting \`wpa_cli scan_results\`
 
-If no options are specified, runs with default:
-> roam -r -w 4
-   
+Either roam directly to a specified BSSID...
+   \$ roam 'f4:92:bf:70:0d:6e'
+
+...or use a command above. If no options are specified, runs with
+default:
+   \$ roam select --wait 5
+
 EOF
 exit "$1"
 }
 
 
 function wpa_scan {
-   # Don't currently know a better option than just sleeping while waiting for
-   # results. Unless I can have an intermediate menu to?
-   sudo wpa_cli scan >/dev/null ; sleep "$TIME"
+   # shellcheck disable=SC2155
+   local scan_results
+   local -i scan_count
+
+   scan_results=$( sudo wpa_cli scan_results )
+   scan_count=$(grep -c "$SSID" <<< "${scan_results}" )
+
+   if (( scan_count < 2 )) ; then
+      # Don't currently know a better option than just sleeping while waiting
+      # for results. Unless I can have an intermediate menu to?
+      sudo wpa_cli scan >/dev/null ; sleep "$__wait"
+   fi
 
    mapfile -t LINES < <(
-      sudo wpa_cli scan_results           |
-      awk '/CALL-TUR/ {print $1 "\t" $3}' |
+      # Not a huge deal if we re-call `scan_results` here, it's very fast.
+      sudo wpa_cli scan_results                                |
+      awk -v "SSID=$SSID" 'match($0, SSID) {print $1 "\t" $3}' |
       sort -k2
    )
 }
 
 
-function wpa_roam {
+function pretty_lines {
+   local n line
    for n in "${!LINES[@]}" ; do
-      [[ ${LINES[n]} =~ ([[:xdigit:]:]+) ]]
+      line="${LINES[n]}"
+
+      [[ ${line} =~ ([[:xdigit:]:]+) ]]
       LINES[n]+=$'\t'
-      LINES[n]+="${device_bssid[${BASH_REMATCH[1]}]}"
+      LINES[n]+="${wap_bssid[${BASH_REMATCH[1]}]}"
+
+      if [[ $line == "${BSSID}"* ]] ; then
+         LINES[n]+=' <--'
+      fi
    done
+}
+
+#                                   commands
+#-------------------------------------------------------------------------------
+function cmd_list {
+   while (( $# )) ; do
+      case "$1" in
+         -w | --wait)
+               shift ; __wait="$1" ; shift
+               ;;
+         *)    printf 'Command `list` not expecting parameter [%s].'  "$1" >&2
+               ;;
+      esac
+   done
+
+   wpa_scan
+   pretty_lines
+
+   printf '%s\n' "${LINES[@]}"
+}
+
+
+function cmd_select {
+   while (( $# )) ; do
+      case "$1" in
+         -w | --wait)
+               shift ; __wait="$1" ; shift
+               ;;
+         *)    printf 'Command `list` not expecting parameter [%s].'  "$1" >&2
+               exit 1
+               ;;
+      esac
+   done
+
+   wpa_scan
+
+   local bssid
+   select bssid in "${LINES[@]}" ; do
+      [[ $bssid ]] && break
+   done
+
+   sudo wpa_cli roam "${bssid%%[[:space:]]*}"
+}
+
+
+function cmd_rofi {
+   while (( $# )) ; do
+      case "$1" in
+         -w | --wait)
+               shift ; __wait="$1" ; shift
+               ;;
+
+         *)    printf 'Command `list` not expecting parameter [%s].'  "$1" >&2
+               exit 1
+               ;;
+      esac
+   done
+
+   wpa_scan
+   pretty_lines
 
    params=(
       -dmenu
       -sep   '\n'
-      -p     "roam?"              #< prompt
-      -a     1                    #< mark 1st row as active
-      -mesg  "current::${wap}"
+      -p     "roam"   #< prompt
+      -a     1        #< mark 1st row as active
    )
    rv=$( printf '%s\n' "${LINES[@]}" | rofi "${params[@]}" ) || exit 0
    awk '{print $1}' <<< "$rv" | xargs sudo wpa_cli roam
 }
 
-
-function wpa_results {
-   for n in "${!LINES[@]}" ; do
-      local line="${LINES[n]}"
-      printf '%s' "$line"
-
-      if [[ ${line} == "${BSSID}"* ]] ; then
-         printf ' <--'
-      fi
-
-      printf '\n'
-   done
-}
+#                               argument parsing
+#-------------------------------------------------------------------------------
+# Flags
+declare -gi __wait=7       # Seconds before `wpa_cli scan_results`
+declare -gi __current=0    # Boolean. Display currently connected WAP?
 
 
-declare -A actions=(
-   [list]=0
-   [show]=0
-   [scan]=1
-   [roam]=1
-)
-
-# Don't default `wpa_cli roam` when passing in parameters.
-if (( $# )) ; then
-   actions['roam']=0
-   actions['scan']=0
+# No args -- default to `select`.
+if (( ! $# )) ; then
+   # Shellcheck wants me to pass arguments to the function, even though it
+   # intrinsically does not take any when invoked this way.
+   # shellcheck disable=SC2119
+   cmd_select ; exit $?
 fi
 
-while (( $# )) ; do
-   case "$1" in
-      -h | --help)
+
+declare -a opts=(
+   '-h'
+   '--help'
+   'help'
+   'select'
+   'list'
+   'rofi'
+   'current'
+)
+
+mapfile -t choices < <(
+   compgen -W "${opts[*]}" -- "$1"
+)
+
+if (( ${#choices[@]} == 1)) ; then
+   set -- "${choices[0]}"  "${@:2}"
+fi
+
+
+case "$1" in
+   list)    cmd_list    "${@:2}" ;;
+   rofi)    cmd_rofi    "${@:2}" ;;
+   select)  cmd_select  "${@:2}" ;;
+   current) echo "$WAP"          ;;
+
+   -h | --help | help)
             usage 0
             ;;
 
-      -s | --show)
-            actions['show']=1 
-            shift
+   *)       sudo wpa_cli roam "$1"
             ;;
-
-      -l | --list) 
-            actions['scan']=1
-            actions['list']=1
-            shift
-            ;;
-
-      -r | --roam)
-            actions['scan']=1
-            actions['roam']=1
-            shift
-            ;;
-
-      -w | --wait)
-            shift ; TIME="$1" ; shift
-            ;;
-
-      *)    echo "Invalid param: $1"
-            exit 1
-            ;;
-   esac
-done
-
-(( actions[show] )) && echo "$device"
-(( actions[scan] )) && wpa_scan
-(( actions[list] )) && wpa_results
-(( actions[roam] )) && wpa_roam
+esac
