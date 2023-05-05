@@ -34,9 +34,9 @@ command:
    current           display currently connected WAP
 
 options:
-   -c | --current     display currently connected AP
-   -w | --wait INT    sleep <INT> seconds after scanning before
-                      getting \`wpa_cli scan_results\`
+   -f | --force      force a re-scan, even if results are available
+   -w | --wait INT   sleep <INT> seconds after scanning before
+                     getting \`wpa_cli scan_results\`
 
 Either roam directly to a specified BSSID...
    \$ roam 'f4:92:bf:70:0d:6e'
@@ -52,15 +52,17 @@ exit "$1"
 
 function wpa_scan {
    # shellcheck disable=SC2155
-   local scan_results
-   local -i scan_count
+   local early_results
+   local -i early_count
 
-   scan_results=$( sudo wpa_cli scan_results )
-   scan_count=$(grep -c "$SSID" <<< "${scan_results}" )
+   # If running several times back-to-back, there's a good chance the old
+   # results are still valid. Potentially don't re-scan.
+   early_results=$( sudo wpa_cli scan_results )
+   early_count=$(grep -c "$SSID" <<< "${early_results}" )
 
-   if (( scan_count < 2 )) ; then
+   if (( __force || early_count < 2 )) ; then
       # Don't currently know a better option than just sleeping while waiting
-      # for results. Unless I can have an intermediate menu to?
+      # for results.
       sudo wpa_cli scan >/dev/null ; sleep "$__wait"
    fi
 
@@ -93,8 +95,13 @@ function pretty_lines {
 function cmd_list {
    while (( $# )) ; do
       case "$1" in
+         -f | --force)
+               shift ; __force=1
+               ;;
+
          -w | --wait)
                shift ; __wait="$1" ; shift
+
                ;;
          *)    printf 'Command `list` not expecting parameter [%s].'  "$1" >&2
                ;;
@@ -111,8 +118,13 @@ function cmd_list {
 function cmd_select {
    while (( $# )) ; do
       case "$1" in
+         -f | --force)
+               shift ; __force=1
+               ;;
+
          -w | --wait)
                shift ; __wait="$1" ; shift
+
                ;;
          *)    printf 'Command `list` not expecting parameter [%s].'  "$1" >&2
                exit 1
@@ -134,6 +146,10 @@ function cmd_select {
 function cmd_rofi {
    while (( $# )) ; do
       case "$1" in
+         -f | --force)
+               shift ; __force=1
+               ;;
+
          -w | --wait)
                shift ; __wait="$1" ; shift
                ;;
@@ -161,6 +177,7 @@ function cmd_rofi {
 #-------------------------------------------------------------------------------
 # Flags
 declare -gi __wait=7       # Seconds before `wpa_cli scan_results`
+declare -gi __force=0      # Force re-scan, even if results are avilable
 declare -gi __current=0    # Boolean. Display currently connected WAP?
 
 
