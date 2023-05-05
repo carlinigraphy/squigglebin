@@ -166,8 +166,7 @@ function cmd_rofi {
    params=(
       -dmenu
       -sep   '\n'
-      -p     "roam"   #< prompt
-      -a     1        #< mark 1st row as active
+      -p     "roam"
    )
    rv=$( printf '%s\n' "${LINES[@]}" | rofi "${params[@]}" ) || exit 0
    awk '{print $1}' <<< "$rv" | xargs sudo wpa_cli roam
