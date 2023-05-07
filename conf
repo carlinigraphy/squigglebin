@@ -1,19 +1,24 @@
 #!/bin/bash
 # vim: ft=bash tw=80
 #
-# shellcheck disable=SC2178
+# shellcheck disable=SC2178,2128
 # ^-- really doesn't understand namerefs.
 #
 # Ground-up rewrite of previous `conf`. Think I can make cleaner this time
 # around.
 #
 #-------------------------------------------------------------------------------
+# CURRENT:
+# `edit' command. (( len = ${#entry[@]}, O = (entry <= 3) ? entry : 3 ))
+#
 # TODO:
 # Better error handling. As always. Collect all errors, report at once. Don't
 # spray all over the entire script. Centralize. Use some form of a "location"
 # object. Not too hard here, it's linewise. Just need a line number.
 #
 #-------------------------------------------------------------------------------
+set -e
+
 #DATA_FILE="${XDG_DATA_HOME:-${HOME}/.local/share/twce/conf}"/data
 #DATA_FILE="${XDG_DATA_HOME:-${HOME}/.local/share/twce/conf}"/data
 PROGDIR=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd )
@@ -35,7 +40,8 @@ declare -g  ENTRY
 declare -gi _ENTRY_NUM=0
 
 # Argument parsing functions set params in this dict.
-declare -gA CMD_ARGS
+declare -ga ARGS
+declare -ga KWARGS
 
 
 function usage {
@@ -119,23 +125,23 @@ function append_path {
             ;;
    esac
 
-   local -n entry="$ENTRY"
-   entry+=( "$path" )
+   local -n entry_r="$ENTRY"
+   entry_r+=( "$path" )
 }
 
 
 function db_validate {
    for nick in "${!DB[@]}" ; do
-      local -n entry="${DB[$nick]}"
+      local -n entry_r="${DB[$nick]}"
 
       # TODO: maybe instead of exiting just print as a 'warning' and unset from
       #       the dict?
-      if (( ! ${#entry[@]} )) ; then
+      if (( ! ${#entry_r[@]} )) ; then
          printf "Nickname \`%s' has no associated paths.\n"  "$nick"
          exit 1
       fi
 
-      for path in "${entry[@]}" ; do
+      for path in "${entry_r[@]}" ; do
          if [[ ! -f $path ]] || [[ ! -r $path ]] ; then
             printf 'File not readable or does not exist: %s\n'  "$path"
             exit 1
@@ -157,9 +163,9 @@ function db_store {
    cp -f "$DATA_FILE"  "${DATA_FILE}.bak"
 
    { for nick in "${DB_ORDER[@]}" ; do
-      local -n entry="${DB[$nick]}"
-      printf '%s\n'  "$nick"
-      printf '%3s%s\n'  "${entry[@]}"
+      local -n entry_r="${DB[$nick]}"
+      printf '%s\n'     "$nick"
+      printf '   %s\n'  "${entry_r[@]}"
       printf '\n'
    done } > "$DATA_FILE"
 }
@@ -169,20 +175,33 @@ function db_remove {
    local nick="$1" ; shift
 }
 
-#                                command :: new
+#                                command :: dir
 #-------------------------------------------------------------------------------
+function usage_dir { :
+}
+
+
+function parse_args_dir { :
+}
+
+
 function cmd_dir {
    local nick="$1" ; shift
 }
 
-#                                command :: new
+#                                command :: set
 #-------------------------------------------------------------------------------
-function cmd_set {
-   local nick="$1" ; shift
-   parse_args_set "$@"
-   
-   entry_new ; local -n entry="$ENTRY"
-   entry=( "${CMD_ARGS[@]}" )
+function usage_set {
+cat <<EOF
+usage: conf <nick> set path1 [pathN]
+
+options:
+   -h | --help    show this message and exit
+   --             end of options
+
+EOF
+
+exit "$1"
 }
 
 
@@ -212,24 +231,30 @@ function parse_args_set {
       usage_set 1
    fi
 
-   declare -a CMD_ARGS=( "${paths[@]}" )
-   declare -A CMD_KWARGS=(
+   ARGS=( "${paths[@]}" )
+   KWARGS=(
       ['overwrite']="${overwrite}"
    )
 }
 
 
-function usage_set {
-cat <<EOF
-usage: conf <nick> set path1 [pathN]
+function cmd_set {
+   local nick="$1" ; shift
+   parse_args_set "$@"
+   
+   new_entry
+   local entry="$ENTRY"
+   local entry_r="$entry"
 
-options:
-   -h | --help    show this message and exit
-   --             end of options
+   # shellcheck disable=SC2034
+   entry_r=( "${ARGS[@]}" )
 
-EOF
+   if [[ ! ${DB[$nick]} ]] ; then
+      DB_ORDER+=( "$nick" )
+   fi
 
-exit "$1"
+   DB["$nick"]="$entry"
+   declare -p DB DB_ORDER $entry
 }
 
 #                                command :: edit
@@ -254,7 +279,10 @@ function usage_edit {
 db_load
 
 # TODO:
-# Also kinda need to account for top-level flags like --database or --fmt
+# Also kinda need to account for top-level flags like
+#  --db-edit
+#  --fmt
+#  --sort
 
 #if (( ! $# )) ; then
 #   usage 0
