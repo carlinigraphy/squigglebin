@@ -1,0 +1,272 @@
+#!/bin/bash
+# vim: ft=bash tw=80
+#
+# shellcheck disable=SC2178
+# ^-- really doesn't understand namerefs.
+#
+# Ground-up rewrite of previous `conf`. Think I can make cleaner this time
+# around.
+#
+#-------------------------------------------------------------------------------
+# TODO:
+# Better error handling. As always. Collect all errors, report at once. Don't
+# spray all over the entire script. Centralize. Use some form of a "location"
+# object. Not too hard here, it's linewise. Just need a line number.
+#
+#-------------------------------------------------------------------------------
+#DATA_FILE="${XDG_DATA_HOME:-${HOME}/.local/share/twce/conf}"/data
+#DATA_FILE="${XDG_DATA_HOME:-${HOME}/.local/share/twce/conf}"/data
+PROGDIR=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd )
+DATA_FILE="${PROGDIR}"/testfiles/conf/database
+mkdir -p "${DATA_FILE%/*}"
+
+# Database represented in bash as an array of 'entry' objects.
+# DB := {
+#     $nick1 := {path1, path2... pathN},
+#     $nick2 := {path1, path2... pathN},
+# }
+declare -gA DB=()
+
+# Maintain user's order.
+declare -ga DB_ORDER=()
+
+# Holds pointer to current entry array.
+declare -g  ENTRY
+declare -gi _ENTRY_NUM=0
+
+# Argument parsing functions set params in this dict.
+declare -gA CMD_ARGS
+
+
+function usage {
+   local outfile
+   case "$1" in
+      0) outfile=/dev/stdout ;;
+      *) outfile=/dev/stderr ;;
+   esac
+ 
+   cat <<EOF >"$outfile"
+usage: ${BASH_SOURCE[0]##*/} nickname command [param]
+
+In which the \`nickname' is a short user-identifiable name given a file, or
+group of files.
+
+commands:
+   set  PATH+  sets PATH(s) for given NICKNAME
+   dir         prints the dirname for a given NICKNAME
+   edit ARGS   exec's \$EDITOR with ARGS for a given NICKNAME
+
+With no commands, defaults to:
+   \$ conf <nickname> edit
+
+EOF
+
+exit "$1"
+}
+
+#                              database nonsense
+#-------------------------------------------------------------------------------
+function new_entry {
+   local entry="_ENTRY_$(( ++_DATA_NUM ))"
+   declare -ga "$entry"
+
+   if [[ $1 ]] ; then
+      DB["$1"]="$entry"
+      DB_ORDER+=( "$1" )
+   fi
+
+   declare -g ENTRY="$entry"
+}
+
+
+function db_load {
+   local entry
+   local -i idx=0
+
+   while IFS=$'\n' read -r line ; do
+      (( ++idx ))
+
+      is_whitespace "$line" && continue
+
+      if is_nick "$line" ; then
+         new_entry "${BASH_REMATCH[1]}"
+      else
+         append_path "${line##* }"  "$idx"
+      fi
+   done < "$DATA_FILE"
+
+   db_validate
+}
+
+function is_whitespace { [[ $1 =~ ^[[:space:]]*$      ]] ;}
+function is_path       { [[ $1 =~ ^([[:space:]]+)(.*) ]] ;}
+function is_nick       { [[ $1 =~ ^([^[:space:]]+)    ]] ;}
+
+
+function append_path {
+   local path="$1"
+
+   if [[ ! $ENTRY ]] ; then
+      printf 'Unexpected indent on line %d.\n'  "$idx" >&2
+      exit 1
+   fi
+
+   case "$path" in
+      /*)   ;;
+      ~*)   path="${path/\~/${HOME}}" ;;
+      *)    printf 'Paths must be absolute: %s\n'  "$path"
+            exit 1
+            ;;
+   esac
+
+   local -n entry="$ENTRY"
+   entry+=( "$path" )
+}
+
+
+function db_validate {
+   for nick in "${!DB[@]}" ; do
+      local -n entry="${DB[$nick]}"
+
+      # TODO: maybe instead of exiting just print as a 'warning' and unset from
+      #       the dict?
+      if (( ! ${#entry[@]} )) ; then
+         printf "Nickname \`%s' has no associated paths.\n"  "$nick"
+         exit 1
+      fi
+
+      for path in "${entry[@]}" ; do
+         if [[ ! -f $path ]] || [[ ! -r $path ]] ; then
+            printf 'File not readable or does not exist: %s\n'  "$path"
+            exit 1
+         fi
+      done
+   done
+}
+
+
+function db_fmt { :;
+   #if [[ $line =~ ^([[:space:]]+)(.*) ]] ; then
+   #   local _indent="${BASH_REMATCH[1]}"
+   #   indent="${#indent}"
+   #fi
+}
+
+
+function db_store {
+   cp -f "$DATA_FILE"  "${DATA_FILE}.bak"
+
+   { for nick in "${DB_ORDER[@]}" ; do
+      local -n entry="${DB[$nick]}"
+      printf '%s\n'  "$nick"
+      printf '%3s%s\n'  "${entry[@]}"
+      printf '\n'
+   done } > "$DATA_FILE"
+}
+
+
+function db_remove {
+   local nick="$1" ; shift
+}
+
+#                                command :: new
+#-------------------------------------------------------------------------------
+function cmd_dir {
+   local nick="$1" ; shift
+}
+
+#                                command :: new
+#-------------------------------------------------------------------------------
+function cmd_set {
+   local nick="$1" ; shift
+   parse_args_set "$@"
+   
+   entry_new ; local -n entry="$ENTRY"
+   entry=( "${CMD_ARGS[@]}" )
+}
+
+
+function parse_args_set {
+   local -a paths=()
+   
+   while (( $# )) ; do
+      case "$1" in
+         -h | --help)
+               usage_set 0
+               ;;
+
+         --)   shift ; break
+               ;;
+
+         *)    paths+=( "$1" )
+               shift
+               ;;
+      esac
+   done
+
+   # Add any extra paths if user ended args with '--'.
+   paths+=( "$@" )
+
+   if (( ! ${#paths[@]} )) ; then
+      printf "Command \`set' expecting a path.\n"
+      usage_set 1
+   fi
+
+   declare -a CMD_ARGS=( "${paths[@]}" )
+   declare -A CMD_KWARGS=(
+      ['overwrite']="${overwrite}"
+   )
+}
+
+
+function usage_set {
+cat <<EOF
+usage: conf <nick> set path1 [pathN]
+
+options:
+   -h | --help    show this message and exit
+   --             end of options
+
+EOF
+
+exit "$1"
+}
+
+#                                command :: edit
+#-------------------------------------------------------------------------------
+function cmd_edit { :;
+   #cd "${path[0]%/*}"
+   #exec $EDITOR "${args[@]}" "${path[@]}"
+}
+
+
+function parse_edit {
+   :
+}
+
+
+function usage_edit {
+   :
+}
+
+#                                    engage
+#-------------------------------------------------------------------------------
+db_load
+
+# TODO:
+# Also kinda need to account for top-level flags like --database or --fmt
+
+#if (( ! $# )) ; then
+#   usage 0
+#fi
+#
+#case "$2" in
+#   'dir')   cmd_dir   "$1"            ;;
+#   'set')   cmd_set   "$1"  "${@:2}"  ;;
+#   'edit')  cmd_edit  "$1"  "${@:2}"  ;;
+#   '')      cmd_edit  "$1"            ;;
+#
+#   *)       printf 'Invalid command [%s].\n\n'  "$1"  >&2
+#            usage 1
+#            ;;
+#esac
