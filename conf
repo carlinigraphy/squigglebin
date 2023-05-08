@@ -14,6 +14,7 @@
 # spray all over the entire script. Centralize. Use some form of a "location"
 # object. Not too hard here, it's linewise. Just need a line number.
 #
+#---
 # May help to change the order from...
 #  $ ./conf <nick> command [arg1..argN]
 #
@@ -29,6 +30,21 @@
 #
 # Should make that the easiest. Though it does make parsing args for non-nick
 # commands a little more spicy. Need to think through what's best.
+#
+# Maybe shifting the nickname to the end of the command?
+#  $ conf set [path1..pathN] nick
+#
+# Still works for editing if $1 is unambiguous with local commands, or db keys.
+# Prioritizing commands. When loading the database can check against reserved
+# words. As long as the command list is short, it shouldn't matter much.
+#
+# Upon further thought...
+# Yeah, this is definitely better. Makes it easier to pass --helps to the
+# subcommands.
+#
+#---
+# Need to handle glob matches in the data file. Kinda annoying to pass in all
+# files under a directory individually.
 #
 #-------------------------------------------------------------------------------
 set -e
