@@ -1,7 +1,7 @@
 #!/bin/bash
 # vim: ft=bash tw=80
 #
-# shellcheck disable=SC2016,SC2128,SC2178
+# shellcheck disable=SC2016,SC2128,SC2178,SC2206
 # ^-- really doesn't understand namerefs, also I promise I know when I'm puting
 #     something that looks like a variable in single quotes. bah.
 #
@@ -10,48 +10,25 @@
 #
 #-------------------------------------------------------------------------------
 # TODO:
-# Better error handling. As always. Collect all errors, report at once. Don't
-# spray all over the entire script. Centralize. Use some form of a "location"
-# object. Not too hard here, it's linewise. Just need a line number.
+#   [X]  ::  'help')  cmd_help
+#   [X]  ::  'edit')  cmd_edit
+#   [ ]  ::  'set')   cmd_set
+#   [X]  ::  'dir')   cmd_dir
+#   [ ]  ::  'sort')  cmd_sort
+#   [ ]  ::  'clean') cmd_clean
+#   [X]  ::  'db')    cmd_db
+#   [ ]  ::  '')      cmd_single_arg
 #
-#---
-# May help to change the order from...
-#  $ ./conf <nick> command [arg1..argN]
-#
-# ...to...
-#  $ ./conf command <nick> [arg1..argN]
-#
-# With the exception that in the case of a (1) single, (2) non-flag argument,
-# assume it's an `edit` command?
-#
-# The general case is
-#  $ conf i3
-#  $ conf bash
-#
-# Should make that the easiest. Though it does make parsing args for non-nick
-# commands a little more spicy. Need to think through what's best.
-#
-# Maybe shifting the nickname to the end of the command?
-#  $ conf set [path1..pathN] nick
-#
-# Still works for editing if $1 is unambiguous with local commands, or db keys.
-# Prioritizing commands. When loading the database can check against reserved
-# words. As long as the command list is short, it shouldn't matter much.
-#
-# Upon further thought...
-# Yeah, this is definitely better. Makes it easier to pass --helps to the
-# subcommands.
-#
-#---
-# Need to handle glob matches in the data file. Kinda annoying to pass in all
-# files under a directory individually.
+# Easy diff & rollback functionality.
 #
 #-------------------------------------------------------------------------------
 set -e
 
-DATA_FILE="${XDG_DATA_HOME:-${HOME}/.local/share/twce/conf}"/data
-mkdir -p "${DATA_FILE%/*}"
-touch "${DATA_FILE}"
+declare -gr DATA_FILE="${XDG_DATA_HOME:-${HOME}/.local/share/twce/conf}"/data
+declare -gr DATA_DIR="${DATA_FILE%/*}"
+
+mkdir -p "$DATA_DIR"
+touch "$DATA_FILE"
 
 # Database represented in bash as an array of 'entry' objects.
 # DB := {
@@ -69,32 +46,33 @@ declare -gi _ENTRY_NUM=0
 
 # Argument parsing functions set params in this dict.
 declare -ga ARGS
-declare -ga KWARGS
+#declare -ga KWARGS
 
 
 function usage {
    local outfile
    case "$1" in
-      0) outfile=/dev/stdout ;;
-      *) outfile=/dev/stderr ;;
+      0)  outfile=/dev/stdout ;;
+      '') outfile=/dev/stdout ;;
+      *)  outfile=/dev/stderr ;;
    esac
  
    cat <<EOF >"$outfile"
-usage: ${BASH_SOURCE[0]##*/} nickname command [param]
-
-In which the \`nickname' is a short user-identifiable name given a file, or
-group of files.
+usage: ${BASH_SOURCE[0]##*/} command [param1..paramN] NICKNAME
 
 commands:
+   help CMD    prints help text for a given command
+   edit ARGS   exec's \$EDITOR (with ARGS) for a given NICKNAME
    set  PATH+  sets PATH(s) for given NICKNAME
    dir         prints the dirname for a given NICKNAME
-   edit ARGS   exec's \$EDITOR with ARGS for a given NICKNAME
+   sort        sorts entries in the database alphabetically
+   db          exec's \$EDITOR on underlying database
 
-With no commands, defaults to:
-   \$ conf <nickname> edit
+Given only nickname, defaults to implicit \`edit\`:
+   \$ conf bash         # these are
+   \$ conf edit bash    # equivalent
 
 EOF
-
 exit "$1"
 }
 
@@ -103,7 +81,10 @@ exit "$1"
 #declare -ga ERRORS=()
 #declare -gi _ERROR_NUM=0
 
-## TODO: wire this up after core functionality is there.
+# TODO: wire this up after core functionality is there.
+#       Update: I don't know if it's really necessary. There are few times that
+#       continuation after an error is possible, let alone helpful. Pretty much
+#       just when parsing the config file.
 #
 #function new_error {
 #   local error="_ERROR_$(( ++_ERROR_NUM ))"
@@ -116,16 +97,33 @@ exit "$1"
 #
 #   ERRORS+=( "$error" )
 #}
+#
+#
+#declare -rA STATUS=(
+#   ['help']=0           # User specifically passing --help
+#   #...
+#)
 
 #                              database nonsense
 #-------------------------------------------------------------------------------
 function new_entry {
-   local entry="_ENTRY_$(( ++_DATA_NUM ))"
-   declare -ga "$entry"
+   local lineno="$1"  nick="$2"
 
-   if [[ $1 ]] ; then
-      DB["$1"]="$entry"
-      DB_ORDER+=( "$1" )
+   local entry="_ENTRY_$(( ++_ENTRY_NUM ))"
+   declare -gA "$entry"
+
+   local items="_ENTRY_ITEMS_${_ENTRY_NUM}"
+   declare -ga "$items"
+
+   local -n entry_r="$entry"
+   entry_r['items']="$items"
+
+   # *New* entries must be added to the DB order. Existing entries to be updated
+   # must not be added twice.
+   if [[ $lineno && $nick ]] ; then
+      DB["$nick"]="$entry"
+      DB_ORDER+=( "$nick" )
+      entry_r['lineno']="$lineno"
    fi
 
    declare -g ENTRY="$entry"
@@ -133,12 +131,13 @@ function new_entry {
 
 
 function db_store {
-   cp -f "$DATA_FILE"  "${DATA_FILE}.bak"
+   install --backup=numbered "$DATA_FILE"  "${DATA_DIR}/backup"
 
    { for nick in "${DB_ORDER[@]}" ; do
       local -n entry_r="${DB[$nick]}"
+      local -n items_r="${entry_r['items']}"
       printf '%s\n'     "$nick"
-      printf '   %s\n'  "${entry_r[@]}"
+      printf '   %s\n'  "${items_r[@]}"
       printf '\n'
    done } > "$DATA_FILE"
 }
@@ -146,76 +145,79 @@ function db_store {
 
 function db_load {
    local entry
-   local -i idx=0
+   local -i lineno=0
 
    while IFS=$'\n' read -r line ; do
-      (( ++idx ))
+      (( ++lineno ))
 
       is_whitespace "$line" && continue
+      is_comment    "$line" && continue
 
       if is_nick "$line" ; then
-         new_entry "${BASH_REMATCH[1]}"
-      else
-         append_path "${line##* }"  "$idx"
+         new_entry "$lineno" "${BASH_REMATCH[1]}"
+         continue
       fi
+
+      if ! local -n entry_r="$ENTRY" 2>/dev/null ; then
+         printf '(Unexpected indent on line %d.)\n'  "$lineno" >&2
+         exit 1
+      fi
+
+      local -n items_r="${entry_r['items']}"
+      items_r=( ${line##* } )
    done < "$DATA_FILE"
 
    db_validate
 }
 
-function is_whitespace { [[ $1 =~ ^[[:space:]]*$      ]] ;}
-function is_path       { [[ $1 =~ ^([[:space:]]+)(.*) ]] ;}
-function is_nick       { [[ $1 =~ ^([^[:space:]]+)    ]] ;}
-
-
-function append_path {
-   local path="$1"
-
-   if [[ ! $ENTRY ]] ; then
-      printf 'Unexpected indent on line %d.\n'  "$idx" >&2
-      exit 1
-   fi
-
-   case "$path" in
-      /*)   ;;
-      ~*)   path="${path/\~/${HOME}}" ;;
-      *)    printf 'Paths must be absolute: %s\n'  "$path"
-            exit 1
-            ;;
-   esac
-
-   local -n entry_r="$ENTRY"
-   entry_r+=( "$path" )
-}
+function is_whitespace { [[ $1 =~ ^[[:space:]]*$   ]] ;}
+function is_comment    { [[ $1 =~ ^[[:space:]]*#   ]] ;}
+function is_nick       { [[ $1 =~ ^([^[:space:]]+) ]] ;}
 
 
 function db_validate {
    local nick
    for nick in "${!DB[@]}" ; do
       local -n entry_r="${DB[$nick]}"
+      local -n items_r="${entry_r['items']}"
 
       # TODO: maybe instead of exiting just print as a 'warning' and unset from
       #       the dict?
-      if (( ! ${#entry_r[@]} )) ; then
+      if (( ! ${#items_r[@]} )) ; then
          printf "Nickname \`%s' has no associated paths.\n"  "$nick"
          exit 1
       fi
 
       local path
-      for path in "${entry_r[@]}" ; do
+      for path in "${items_r[@]}" ; do
          if [[ ! -f $path ]] || [[ ! -r $path ]] ; then
-            printf 'File not readable or does not exist: %s\n'  "$path"
+            printf 'Does not exist, or cannot read: %s\n'  "$path"
             exit 1
          fi
       done
    done
 }
 
+#                          command :: single argument
+#-------------------------------------------------------------------------------
+function cmd_single_arg {
+   printf 'single arg> %s\n' "$@"
+
+   #db_load
+}
+
 #                                command :: dir
 #-------------------------------------------------------------------------------
 function usage_dir {
-cat <<EOF
-usage: conf <nick> dir
+   local outfile
+   case "$1" in
+      0)  outfile=/dev/stdout ;;
+      '') outfile=/dev/stdout ;;
+      *)  outfile=/dev/stderr ;;
+   esac
+ 
+   cat <<EOF >"$outfile"
+usage: conf dir NICKNAME
 
 \`exec\` $SHELL in the nick's first file's directory.
 
@@ -223,17 +225,16 @@ options:
    -h | --help    show this message and exit
 
 EOF
-
 exit "$1"
 }
 
 
 function parse_args_dir {
-   ARGS=() ; KWARGS=()
+   ARGS=() #; KWARGS=()
    
    while (( $# )) ; do
       case "$1" in
-         -h | --help)
+         -h | --help | help)
                usage_edit 0
                ;;
 
@@ -246,30 +247,35 @@ function parse_args_dir {
       esac
    done
 
-   # Add any extra paths if user ended args with '--'.
    ARGS+=( "$@" )
+
+   if (( ${#ARGS[@]} > 1 )) ; then
+      printf "(Command \`dir' expects only nickname.)\n\n" >&2
+      usage_dir 1
+   fi
 }
 
 
 function cmd_dir {
-   local nick="$1" ; shift
+   parse_args_dir "$@"
+   local nick="${ARGS[0]}"
 
    db_load
    local entry="${DB[$nick]}"
    if [[ ! $entry ]] ; then
-      printf "Nickname \`%s' does not exist.\n"  "$nick"
+      printf "(Nickname \`%s' does not exist.)\n"  "$nick"
       exit 1
    fi
 
-   parse_args_dir "$@"
    local -n entry_r="$entry"
+   local -n items_r="${entry_r['items']}"
 
    printf '(in subshell, SHLVL is %d. <C-D> to exit.)\n'  "$(( SHLVL - 1))"
-   cd "${entry_r[0]%/*}"
+   cd "${items_r[0]%/*}"
 
    # There's a little bit of tomfoolery here. I want to overwrite PS1, but it's
    # set *after* any exported variables when .bashrc is read.
-   $SHELL --rcfile <( printf '
+   /bin/bash --rcfile <( printf '
       . ~/.bashrc ; export PS1="[conf] ${PS1}"
    ')
 }
@@ -278,20 +284,19 @@ function cmd_dir {
 #-------------------------------------------------------------------------------
 function usage_set {
 cat <<EOF
-usage: conf <nick> set path1 [pathN]
+usage: conf set NICK path1 [ ,pathN]
 
 options:
    -h | --help    show this message and exit
    --             end of options
 
 EOF
-
 exit "$1"
 }
 
 
 function parse_args_set {
-   ARGS=() ; KWARGS=()
+   ARGS=() #; KWARGS=()
    
    while (( $# )) ; do
       case "$1" in
@@ -302,7 +307,7 @@ function parse_args_set {
          --)   shift ; break
                ;;
 
-         *)    ARGS+=( "$1" )
+         *)    ARGS+=( $1 )
                shift
                ;;
       esac
@@ -311,8 +316,8 @@ function parse_args_set {
    # Add any extra paths if user ended args with '--'.
    ARGS+=( "$@" )
 
-   if (( ! ${#ARGS[@]} )) ; then
-      printf "(Command \`set' expecting a path.)\n"
+   if (( ${#ARGS[@]} < 2 )) ; then
+      printf "(Command \`set' expecting a nickname & path(s).)\n\n" >&2
       usage_set 1
    fi
 
@@ -325,13 +330,13 @@ function parse_args_set {
          *)    path="${PWD}/${path}"     ;;
       esac
 
+      # Re-write path as absolute.
       ARGS[idx]="$path"
    done
 }
 
 
 function cmd_set {
-   local nick="$1" ; shift
    parse_args_set "$@"
 
    db_load
@@ -352,8 +357,15 @@ function cmd_set {
 #                                command :: edit
 #-------------------------------------------------------------------------------
 function usage_edit {
-cat <<EOF
-usage: conf <nick> edit [arg1, ...argN]
+   local outfile
+   case "$1" in
+      0)  outfile=/dev/stdout ;;
+      '') outfile=/dev/stdout ;;
+      *)  outfile=/dev/stderr ;;
+   esac
+ 
+   cat <<EOF >"$outfile"
+usage: conf edit [arg1, ...argN] nick
 
 \`exec\`s $EDITOR w/ optional arguments.
 
@@ -362,13 +374,186 @@ options:
    --             end of options
 
 EOF
-
 exit "$1"
 }
 
 
 function parse_args_edit {
-   ARGS=() ; KWARGS=()
+   ARGS=() #; KWARGS=()
+   
+   while (( $# )) ; do
+      case "$1" in
+         -h | --help)
+               usage_edit 0
+               ;;
+
+         --)   shift ; break
+               ;;
+
+         *)    ARGS+=( "$1" )
+               shift
+               ;;
+      esac
+   done
+
+   ARGS+=( "$@" )
+
+   if (( ! ${#ARGS[@]} )) ; then
+      printf "(Command \`edit' expects a nickname argument.)\n\n" >&2
+      usage_edit 1
+   fi
+}
+
+
+function cmd_edit {
+   parse_args_edit "$@"
+
+   local nick="${ARGS[-1]}"
+   unset 'ARGS[-1]'
+
+   db_load
+   local entry="${DB[$nick]}"
+   if [[ ! $entry ]] ; then
+      printf "Nickname \`%s' does not exist.\n"  "$nick"
+      exit 1
+   fi
+
+   local -n entry_r="$entry"
+   local -n items_r="${entry_r['items']}"
+   cd "${items_r[0]%/*}"
+   exec $EDITOR  "${ARGS[@]}"  "${items_r[@]}"
+}
+
+#                               command :: sort
+#-------------------------------------------------------------------------------
+function usage_sort {
+   local outfile
+   case "$1" in
+      0)  outfile=/dev/stdout ;;
+      '') outfile=/dev/stdout ;;
+      *)  outfile=/dev/stderr ;;
+   esac
+ 
+   cat <<EOF >"$outfile"
+usage: conf sort
+
+Sorts conf's own database alphabetically in-place by nickname.
+
+options:
+   -h | --help    show this message and exit
+
+EOF
+exit "$1"
+}
+
+
+function parse_args_sort {
+   if [[ ! $1 ]] ; then
+      return 0
+   fi
+
+   case "$1" in
+      -h | --help)
+            usage_sort 0
+            ;;
+
+      *)    printf "(Command \`sort' takes no params.)\n\n" >&2
+            usage_sort 1
+            ;;
+   esac
+}
+
+
+function cmd_sort {
+   parse_args_sort "$@"
+
+   db_load
+   mapfile -t DB_ORDER < <(
+      printf '%s\n' "${DB_ORDER[@]}" | sort
+   )
+   db_store
+}
+
+#                               command :: clean
+#-------------------------------------------------------------------------------
+function usage_clean {
+   local outfile
+   case "$1" in
+      0)  outfile=/dev/stdout ;;
+      '') outfile=/dev/stdout ;;
+      *)  outfile=/dev/stderr ;;
+   esac
+ 
+   cat <<EOF >"$outfile"
+usage: conf clean
+
+Cleans all but the last 5 database backups.
+
+options:
+   -h | --help    show this message and exit
+
+EOF
+exit "$1"
+}
+
+
+function parse_args_clean {
+   if [[ ! $1 ]] ; then
+      return 0
+   fi
+
+   case "$1" in
+      -h | --help)
+            usage_clean 0
+            ;;
+
+      *)    printf "(Command \`clean' takes no params.)\n\n" >&2
+            usage_clean 1
+            ;;
+   esac
+}
+
+
+function cmd_clean {
+   parse_args_clean "$@"
+
+   local args=(
+      --printf='%Y %n\n'
+      "${DATA_DIR}"/backup.~*
+   )
+
+   stat "${args[@]}"  \
+   | sort             \
+   | head --lines=-5  \
+   | xargs rm -i
+}
+
+#                                command :: db
+#-------------------------------------------------------------------------------
+function usage_db {
+   local outfile
+   case "$1" in
+      0)  outfile=/dev/stdout ;;
+      '') outfile=/dev/stdout ;;
+      *)  outfile=/dev/stderr ;;
+   esac
+ 
+   cat <<EOF >"$outfile"
+usage: conf db [arg1..argN]
+
+\`exec\`s $EDITOR on conf's own database w/ optional arguments.
+
+options:
+   -h | --help    show this message and exit
+   --             end of options
+
+EOF
+exit "$1"
+}
+
+
+function parse_args_db {
+   ARGS=() #; KWARGS=()
    
    while (( $# )) ; do
       case "$1" in
@@ -389,42 +574,82 @@ function parse_args_edit {
 }
 
 
-function cmd_edit {
-   local nick="$1" ; shift
+function cmd_db {
+   parse_args_db "$@"
+   exec $EDITOR  "${ARGS[@]}"  "${DATA_FILE}"
+}
 
-   db_load
-   local entry="${DB[$nick]}"
-   if [[ ! $entry ]] ; then
-      printf "Nickname \`%s' does not exist.\n"  "$nick"
-      exit 1
+#                               command :: help
+#-------------------------------------------------------------------------------
+function cmd_help {
+   local opt="${1:-_}"
+   local -A valid=(
+      ['edit']=1
+      ['set']=1
+      ['dir']=1
+      ['sort']=1
+      ['clean']=1
+      ['fmt']=1
+      ['db']=1
+   )
+
+   if [[ ! ${valid[$opt]} ]] ; then
+      { printf "(Command \`help' expecting one of...\n"
+        printf ' %s\n'  "${!valid[@]}"
+        printf ')\n\n'
+      } >&2
+      usage 1
    fi
 
-   parse_args_edit "$@"
-
-   local -n entry_r="$entry"
-   cd "${entry_r[0]%/*}" ; pwd
-   exec $EDITOR  "${ARGS[@]}" "${entry_r[@]}"
+   usage_"$opt" 0
 }
 
 #                                    engage
 #-------------------------------------------------------------------------------
-# TODO:
-# Also kinda need to account for top-level flags like
-#  --db-edit
-#  --fmt
-#  --sort
-
 if (( ! $# )) ; then
    usage 0
 fi
 
-case "$2" in
-   'dir')   cmd_dir   "$1"            ;;
-   'set')   cmd_set   "$1"  "${@:3}"  ;;
-   'edit')  cmd_edit  "$1"  "${@:3}"  ;;
-   '')      cmd_edit  "$1"            ;;
+declare -a cmd=()
+declare -a opts=(
+   'help'  '-h'  '--help'
+   'edit'
+   'set'
+   'dir'
+   'sort'
+   'clean'
+   'fmt'
+   'db'
+   '--'
+)
 
-   *)       printf "(Invalid command \`%s'.)\n\n"  "$2"  >&2
-            usage 1
-            ;;
+mapfile -t cmd < <(
+   compgen -W "${opts[*]}" -- "$1" 
+)
+
+if (( ${#cmd[@]} > 1 )) ; then 
+   { printf "(Ambiguous command \`%s' can be...\n"  "$1"
+     printf ' %s\n'  "${cmd[@]}"
+     printf ')\n'
+   } >&2
+   exit 1
+fi
+
+case "${cmd[0]}" in
+   -h | --help)
+            usage 0                   ;;
+   'help')  cmd_help        "${2}"    ;;
+   'edit')  cmd_edit        "${@:2}"  ;;
+   'set')   cmd_set         "${@:2}"  ;;
+   'dir')   cmd_dir         "${@:2}"  ;;
+   'sort')  cmd_sort        "${@:2}"  ;;
+   'clean') cmd_clean       "${@:2}"  ;;
+   'db')    cmd_db          "${@:2}"  ;;
+
+   # If compgen matches none of the above, it's potentially a short-form edit.
+   '')      cmd_single_arg  "${@}"    ;;
+
+   # End of args, if use wants a reserved word above as a nickname.
+   '--')    shift
+            cmd_single_arg  "${@}"    ;;
 esac
