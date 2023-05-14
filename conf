@@ -12,12 +12,12 @@
 # TODO:
 #   [X]  ::  'help')  cmd_help
 #   [X]  ::  'edit')  cmd_edit
-#   [ ]  ::  'set')   cmd_set
+#   [X]  ::  'set')   cmd_set
 #   [X]  ::  'dir')   cmd_dir
-#   [ ]  ::  'sort')  cmd_sort
-#   [ ]  ::  'clean') cmd_clean
+#   [X]  ::  'sort')  cmd_sort
+#   [X]  ::  'clean') cmd_clean
 #   [X]  ::  'db')    cmd_db
-#   [ ]  ::  '')      cmd_single_arg
+#   [X]  ::  '')      cmd_single_arg
 #
 # Easy diff & rollback functionality.
 #
@@ -46,7 +46,7 @@ declare -gi _ENTRY_NUM=0
 
 # Argument parsing functions set params in this dict.
 declare -ga ARGS
-#declare -ga KWARGS
+declare -gA KWARGS
 
 
 function usage {
@@ -201,9 +201,11 @@ function db_validate {
 #                          command :: single argument
 #-------------------------------------------------------------------------------
 function cmd_single_arg {
-   printf 'single arg> %s\n' "$@"
-
-   #db_load
+   if (( $# != 1 )) ; then
+      printf "(Abbreviated form expecting exactly one argument.)\n" >&2
+      exit 1
+   fi
+   cmd_edit "$1"
 }
 
 #                                command :: dir
@@ -219,7 +221,7 @@ function usage_dir {
    cat <<EOF >"$outfile"
 usage: conf dir NICKNAME
 
-\`exec\` $SHELL in the nick's first file's directory.
+\`cd\` to \`dirname NICK[0]\` in a subshell.
 
 options:
    -h | --help    show this message and exit
@@ -235,10 +237,7 @@ function parse_args_dir {
    while (( $# )) ; do
       case "$1" in
          -h | --help | help)
-               usage_edit 0
-               ;;
-
-         --)   shift ; break
+               usage_dir 0
                ;;
 
          *)    ARGS+=( "$1" )
@@ -246,8 +245,6 @@ function parse_args_dir {
                ;;
       esac
    done
-
-   ARGS+=( "$@" )
 
    if (( ${#ARGS[@]} > 1 )) ; then
       printf "(Command \`dir' expects only nickname.)\n\n" >&2
@@ -288,7 +285,7 @@ usage: conf set NICK path1 [ ,pathN]
 
 options:
    -h | --help    show this message and exit
-   --             end of options
+   --             end of options, begin paths
 
 EOF
 exit "$1"
@@ -296,7 +293,7 @@ exit "$1"
 
 
 function parse_args_set {
-   ARGS=() #; KWARGS=()
+   ARGS=() ; KWARGS=()
    
    while (( $# )) ; do
       case "$1" in
@@ -321,6 +318,9 @@ function parse_args_set {
       usage_set 1
    fi
 
+   KWARGS['nick']="${ARGS[0]}"
+   unset 'ARGS[0]'
+
    local idx path
    for idx in "${!ARGS[@]}" ; do
       path="${ARGS[idx]}"
@@ -338,19 +338,22 @@ function parse_args_set {
 
 function cmd_set {
    parse_args_set "$@"
+   local nick="${KWARGS['nick']}"
 
    db_load
-   
    new_entry
    local entry="$ENTRY"
    local -n entry_r="$entry"
-   entry_r=( "${ARGS[@]}" )
+   local -n items_r="${entry_r['items']}"
+   items_r=( "${ARGS[@]}" )
 
    if [[ ! ${DB[$nick]} ]] ; then
       DB_ORDER+=( "$nick" )
    fi
 
    DB["$nick"]="$entry"
+
+   db_validate
    db_store
 }
 
@@ -485,12 +488,16 @@ function usage_clean {
    esac
  
    cat <<EOF >"$outfile"
-usage: conf clean
+usage: conf clean [\`rm\` args]
 
 Cleans all but the last 5 database backups.
 
 options:
    -h | --help    show this message and exit
+
+rm args:
+   Defaults to \`-i\` (interactive removal). Can overwrite by passing additional
+   args.
 
 EOF
 exit "$1"
@@ -498,34 +505,46 @@ exit "$1"
 
 
 function parse_args_clean {
-   if [[ ! $1 ]] ; then
-      return 0
-   fi
+   ARGS=() #; KWARGS=()
 
-   case "$1" in
-      -h | --help)
-            usage_clean 0
-            ;;
+   while (( $# )) ; do
+      case "$1" in
+         -h | --help | help)
+               usage_clean 0
+               ;;
 
-      *)    printf "(Command \`clean' takes no params.)\n\n" >&2
-            usage_clean 1
-            ;;
-   esac
+         --)   shift ; break
+               ;;
+
+         *)    ARGS+=( "$1" )
+               shift
+               ;;
+      esac
+   done
+
+   ARGS+=( "$@" )
 }
 
 
 function cmd_clean {
    parse_args_clean "$@"
 
-   local args=(
+   # Default to 'interactive'.
+   local -a rm=( -i )
+   if (( ${#ARGS[@]} )) ; then
+      rm=( "${ARGS[@]}" )
+   fi
+
+   local -a stat=(
       --printf='%Y %n\n'
       "${DATA_DIR}"/backup.~*
    )
 
-   stat "${args[@]}"  \
-   | sort             \
-   | head --lines=-5  \
-   | xargs rm -i
+   stat "${stat[@]}" 2>&- \
+   | sort                 \
+   | cut -d' ' -f2        \
+   | head --lines=-5      \
+   | xargs rm "${rm[@]}"
 }
 
 #                                command :: db
@@ -558,7 +577,7 @@ function parse_args_db {
    while (( $# )) ; do
       case "$1" in
          -h | --help)
-               usage_edit 0
+               usage_db 0
                ;;
 
          --)   shift ; break
@@ -582,26 +601,25 @@ function cmd_db {
 #                               command :: help
 #-------------------------------------------------------------------------------
 function cmd_help {
-   local opt="${1:-_}"
-   local -A valid=(
-      ['edit']=1
-      ['set']=1
-      ['dir']=1
-      ['sort']=1
-      ['clean']=1
-      ['fmt']=1
-      ['db']=1
-   )
+   # Ignore flags and `conf help help`. Convert to dict for easier lookup.
+   local -A valid=()
+   for opt in "${!opts[@]}" ; do
+      case "$opt" in
+         help)    continue          ;;
+         -*)      continue          ;;
+         *)       valid["$opt"]=1   ;;
+      esac
+   done
 
-   if [[ ! ${valid[$opt]} ]] ; then
-      { printf "(Command \`help' expecting one of...\n"
-        printf ' %s\n'  "${!valid[@]}"
-        printf ')\n\n'
+   if [[ ! ${valid[${1:-_}]} ]] ; then
+      { printf "(Command \`help' expecting exactly one of...\n"
+         printf ' %s\n'  "${!valid[@]}"
+         printf ')\n\n'
       } >&2
-      usage 1
+      exit 1
    fi
 
-   usage_"$opt" 0
+   usage_"$1" 0
 }
 
 #                                    engage
@@ -610,35 +628,45 @@ if (( ! $# )) ; then
    usage 0
 fi
 
-declare -a cmd=()
-declare -a opts=(
-   'help'  '-h'  '--help'
-   'edit'
-   'set'
-   'dir'
-   'sort'
-   'clean'
-   'fmt'
-   'db'
-   '--'
+declare -ga  possible=()
+declare -grA opts=(
+   ['-h']=1
+   ['--help']=1
+   ['help']=1
+   ['edit']=1
+   ['set']=1
+   ['dir']=1
+   ['sort']=1
+   ['clean']=1
+   ['fmt']=1
+   ['db']=1
+   ['--']=1
 )
 
-mapfile -t cmd < <(
-   compgen -W "${opts[*]}" -- "$1" 
-)
+declare cmd="$1"
 
-if (( ${#cmd[@]} > 1 )) ; then 
-   { printf "(Ambiguous command \`%s' can be...\n"  "$1"
-     printf ' %s\n'  "${cmd[@]}"
-     printf ')\n'
-   } >&2
-   exit 1
+# Only necessary if $1 is not an exact match for an option. Uses `compgen` to
+# expand to a command. E.g., `conf c` -> `conf clean`.
+if [[ ! ${opts[$cmd]} ]] ; then
+   mapfile -t possible < <(
+      compgen -W "${!opts[*]}" -- "$1" 
+   )
+
+   if (( ${#possible[@]} > 1 )) ; then 
+      { printf "(Ambiguous command \`%s' can be...\n"  "$1"
+      printf ' %s\n'  "${possible[@]}"
+      printf ')\n'
+      } >&2
+      exit 1
+   fi
+
+   cmd="${possible[0]}"
 fi
 
-case "${cmd[0]}" in
+case "$cmd" in
    -h | --help)
             usage 0                   ;;
-   'help')  cmd_help        "${2}"    ;;
+   'help')  cmd_help        "${@:2}"  ;;
    'edit')  cmd_edit        "${@:2}"  ;;
    'set')   cmd_set         "${@:2}"  ;;
    'dir')   cmd_dir         "${@:2}"  ;;
