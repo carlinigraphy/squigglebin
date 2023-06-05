@@ -146,6 +146,7 @@ function db_store {
 function db_load {
    local entry
    local -i lineno=0
+   local -a files=()
 
    while IFS=$'\n' read -r line ; do
       (( ++lineno ))
@@ -166,9 +167,11 @@ function db_load {
       fi
 
       # Expands literal db entries containing filename globs.
-      mapfile -t items_r < <(
+      mapfile -t files < <(
          xargs -I{} bash -c "printf '%s\n' {}" <<< "${line##* }"
       )
+
+      items_r+=( "${files[@]}" )
    done < "$DATA_FILE"
 
    db_validate
