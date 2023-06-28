@@ -32,6 +32,7 @@ command:
    rofi              use \`rofi\` to choose BSSID, roam to it
    list              display BSSID options for current SSID
    current           display currently connected WAP
+   auto              noninteractively switches to best signal strength
 
 options:
    -f | --force      force a re-scan, even if results are available
@@ -43,7 +44,7 @@ Either roam directly to a specified BSSID...
 
 ...or use a command above. If no options are specified, runs with
 default:
-   \$ roam select --wait 5
+   \$ roam auto --wait 5
 
 EOF
 exit "$1"
@@ -58,7 +59,7 @@ function wpa_scan {
    # If running several times back-to-back, there's a good chance the old
    # results are still valid. Potentially don't re-scan.
    early_results=$( sudo wpa_cli scan_results )
-   early_count=$(grep -c "$SSID" <<< "${early_results}" )
+   early_count=$( grep -c "$SSID" <<< "${early_results}" )
 
    if (( __force || early_count < 2 )) ; then
       # Don't currently know a better option than just sleeping while waiting
@@ -172,6 +173,29 @@ function cmd_rofi {
    awk '{print $1}' <<< "$rv" | xargs sudo wpa_cli roam
 }
 
+
+function cmd_auto {
+   while (( $# )) ; do
+      case "$1" in
+         -f | --force)
+               shift ; __force=1
+               ;;
+
+         -w | --wait)
+               shift ; __wait="$1" ; shift
+               ;;
+
+         *)    printf 'Command `auto` not expecting parameter [%s].'  "$1" >&2
+               exit 1
+               ;;
+      esac
+   done
+
+   wpa_scan
+   awk '{print $1}' <<< "${LINES[0]}" | xargs sudo wpa_cli roam
+}
+
+
 #                               argument parsing
 #-------------------------------------------------------------------------------
 # Flags
@@ -185,7 +209,7 @@ if (( ! $# )) ; then
    # Shellcheck wants me to pass arguments to the function, even though it
    # intrinsically does not take any when invoked this way.
    # shellcheck disable=SC2119
-   cmd_select ; exit $?
+   cmd_auto ; exit $?
 fi
 
 
@@ -196,6 +220,7 @@ declare -a opts=(
    'select'
    'list'
    'rofi'
+   'auto'
    'current'
 )
 
@@ -211,6 +236,7 @@ fi
 case "$1" in
    list)    cmd_list    "${@:2}" ;;
    rofi)    cmd_rofi    "${@:2}" ;;
+   auto)    cmd_auto    "${@:2}" ;;
    select)  cmd_select  "${@:2}" ;;
    current) echo "$WAP"          ;;
 
