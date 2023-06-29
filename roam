@@ -24,7 +24,7 @@ WAP="${WAP:-${BSSID}}"
 
 function usage {
 cat <<EOF
-usage: ${BASH_SOURCE[0]##*/} (BSSID | command [option])
+usage: ${BASH_SOURCE[0]##*/} command [option]
 
 command:
    help              show this message and exit
