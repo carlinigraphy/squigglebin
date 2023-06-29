@@ -1,25 +1,14 @@
 #!/bin/bash
 # vim: ft=bash tw=80 foldmethod=marker foldclose=all
 #
-# shellcheck disable=SC2016,SC2128,SC2178,SC2206
-# ^-- really doesn't understand namerefs, also I promise I know when I'm puting
-#     something that looks like a variable in single quotes. bah.
-#
 # Ground-up rewrite of previous `conf`. Think I can make cleaner this time
 # around.
 #
+# shellcheck disable=SC2178 #< gets confused with namerefs.
+#
 #-------------------------------------------------------------------------------
 # TODO:
-#   [X]  ::  'help')  cmd_help
-#   [X]  ::  'edit')  cmd_edit
-#   [X]  ::  'set')   cmd_set
-#   [X]  ::  'dir')   cmd_dir
-#   [X]  ::  'sort')  cmd_sort
-#   [X]  ::  'clean') cmd_clean
-#   [X]  ::  'db')    cmd_db
-#   [X]  ::  '')      cmd_single_arg
-#
-# Easy diff & rollback functionality.
+#  [ ] Easy diff & rollback functionality.
 #
 #-------------------------------------------------------------------------------
 set -e
@@ -56,7 +45,7 @@ function usage {
       '') outfile=/dev/stdout ;;
       *)  outfile=/dev/stderr ;;
    esac
- 
+
    cat <<EOF >"$outfile"
 usage: ${BASH_SOURCE[0]##*/} command [param1..paramN] NICKNAME
 
@@ -166,6 +155,10 @@ function db_load {
          local -n items_r="${entry_r['items']}"
       fi
 
+      # TODO: this works... but it's pretty slow. Adds a pretty significant
+      #       amount of time to the overall thing. Though I don't know if
+      #       there's really any other way of doing thing.
+      #
       # Expands literal db entries containing filename globs.
       mapfile -t files < <(
          xargs -I{} bash -c "printf '%s\n' {}" <<< "${line##* }"
@@ -208,15 +201,65 @@ function db_validate {
    done
 }
 
-#                          command :: single argument
-#-------------------------------------------------------------------------------
-function cmd_single_arg {
-   if (( $# != 1 )) ; then
-      printf "(Abbreviated form expecting exactly one argument.)\n" >&2
-      exit 1
-   fi
-   cmd_edit "$1"
+#                               command :: list
+#----------------------------------------------------------------------------{{{
+function usage_list {
+   local outfile
+   case "$1" in
+      0)  outfile=/dev/stdout ;;
+      '') outfile=/dev/stdout ;;
+      *)  outfile=/dev/stderr ;;
+   esac
+
+   cat <<EOF >"$outfile"
+usage: conf list
+
+Lists all nicknames in db.
+
+options:
+   -h | --help    show this message and exit
+
+EOF
+exit "$1"
 }
+
+
+function parse_args_list {
+   ARGS=() #; KWARGS=()
+
+   while (( $# )) ; do
+      case "$1" in
+         -h | --help | help)
+               usage_list 0
+               ;;
+
+         *)    ARGS+=( "$1" )
+               shift
+               ;;
+      esac
+   done
+
+   if (( ${#ARGS[@]} > 1 )) ; then
+      printf "(Command \`list' not expecting an argument.)\n\n" >&2
+      usage_list 1
+   fi
+}
+
+
+function cmd_list {
+   parse_args_list "$@"
+
+   while IFS=$'\n' read -r line ; do
+      if is_comment "$line" ; then
+         continue
+      fi
+
+      if is_nick "$line" ; then
+         echo "${BASH_REMATCH[1]}"
+      fi
+   done < "$DATA_FILE"
+}
+#}}}
 
 #                                command :: dir
 #----------------------------------------------------------------------------{{{
@@ -227,7 +270,7 @@ function usage_dir {
       '') outfile=/dev/stdout ;;
       *)  outfile=/dev/stderr ;;
    esac
- 
+
    cat <<EOF >"$outfile"
 usage: conf dir NICKNAME
 
@@ -243,7 +286,7 @@ exit "$1"
 
 function parse_args_dir {
    ARGS=() #; KWARGS=()
-   
+
    while (( $# )) ; do
       case "$1" in
          -h | --help | help)
@@ -282,6 +325,8 @@ function cmd_dir {
 
    # There's a little bit of tomfoolery here. I want to overwrite PS1, but it's
    # set *after* any exported variables when .bashrc is read.
+   #
+   # shellcheck disable=SC2016 #< intentional variable in single quotes.
    /bin/bash --rcfile <( printf '
       . ~/.bashrc ; export PS1="[conf] ${PS1}"
    ')
@@ -305,7 +350,7 @@ exit "$1"
 
 function parse_args_set {
    ARGS=() ; KWARGS=()
-   
+
    while (( $# )) ; do
       case "$1" in
          -h | --help)
@@ -315,7 +360,7 @@ function parse_args_set {
          --)   shift ; break
                ;;
 
-         *)    ARGS+=( $1 )
+         *)    ARGS+=( "$1" )
                shift
                ;;
       esac
@@ -378,7 +423,7 @@ function usage_edit {
       '') outfile=/dev/stdout ;;
       *)  outfile=/dev/stderr ;;
    esac
- 
+
    cat <<EOF >"$outfile"
 usage: conf edit [arg1, ...argN] nick
 
@@ -395,7 +440,7 @@ exit "$1"
 
 function parse_args_edit {
    ARGS=() #; KWARGS=()
-   
+
    while (( $# )) ; do
       case "$1" in
          -h | --help)
@@ -449,7 +494,7 @@ function usage_sort {
       '') outfile=/dev/stdout ;;
       *)  outfile=/dev/stderr ;;
    esac
- 
+
    cat <<EOF >"$outfile"
 usage: conf sort
 
@@ -500,7 +545,7 @@ function usage_clean {
       '') outfile=/dev/stdout ;;
       *)  outfile=/dev/stderr ;;
    esac
- 
+
    cat <<EOF >"$outfile"
 usage: conf clean [\`rm\` args]
 
@@ -571,7 +616,7 @@ function usage_db {
       '') outfile=/dev/stdout ;;
       *)  outfile=/dev/stderr ;;
    esac
- 
+
    cat <<EOF >"$outfile"
 usage: conf db [arg1..argN]
 
@@ -588,7 +633,7 @@ exit "$1"
 
 function parse_args_db {
    ARGS=() #; KWARGS=()
-   
+
    while (( $# )) ; do
       case "$1" in
          -h | --help)
@@ -617,15 +662,13 @@ function cmd_db {
 #                               command :: help
 #----------------------------------------------------------------------------{{{
 function cmd_help {
-   # Ignore flags and `conf help help`. Convert to dict for easier lookup.
    local -A valid=()
    for opt in "${!opts[@]}" ; do
-      case "$opt" in
-         help)    continue          ;;
-         -*)      continue          ;;
-         *)       valid["$opt"]=1   ;;
-      esac
+      valid["$opt"]=1
    done
+
+   # Ignore `conf help help`.
+   unset 'valid[help]'
 
    if [[ ! ${valid[${1:-_}]} ]] ; then
       { printf "(Command \`help' expecting exactly one of...\n"
@@ -647,17 +690,15 @@ fi
 
 declare -ga  possible=()
 declare -grA opts=(
-   ['-h']=1
-   ['--help']=1
    ['help']=1
    ['edit']=1
    ['set']=1
    ['dir']=1
    ['sort']=1
    ['clean']=1
+   ['list']=1
    ['fmt']=1
    ['db']=1
-   ['--']=1
 )
 
 declare cmd="$1"
@@ -666,13 +707,13 @@ declare cmd="$1"
 # expand to a command. E.g., `conf c` -> `conf clean`.
 if [[ ! ${opts[$cmd]} ]] ; then
    mapfile -t possible < <(
-      compgen -W "${!opts[*]}" -- "$1" 
+      compgen -W "${!opts[*]}" -- "$1"
    )
 
-   if (( ${#possible[@]} > 1 )) ; then 
+   if (( ${#possible[@]} > 1 )) ; then
       { printf "(Ambiguous command \`%s' can be...\n"  "$1"
-      printf ' %s\n'  "${possible[@]}"
-      printf ')\n'
+        printf ' %s\n'  "${possible[@]}"
+        printf ')\n'
       } >&2
       exit 1
    fi
@@ -684,17 +725,16 @@ case "$cmd" in
    -h | --help)
             usage 0                   ;;
    'help')  cmd_help        "${@:2}"  ;;
-   'edit')  cmd_edit        "${@:2}"  ;;
    'set')   cmd_set         "${@:2}"  ;;
    'dir')   cmd_dir         "${@:2}"  ;;
    'sort')  cmd_sort        "${@:2}"  ;;
    'clean') cmd_clean       "${@:2}"  ;;
    'db')    cmd_db          "${@:2}"  ;;
-
-   # If compgen matches none of the above, it's potentially a short-form edit.
-   '')      cmd_single_arg  "${@}"    ;;
+   'list')  cmd_list        "${@:2}"  ;;
+   'edit')  cmd_edit        "${@:2}"  ;;
+   '')      cmd_edit        "${@}"    ;;
 
    # End of args, if use wants a reserved word above as a nickname.
    '--')    shift
-            cmd_single_arg  "${@}"    ;;
+            cmd_edit        "${@}"    ;;
 esac
