@@ -39,15 +39,23 @@ options:
    -w | --wait INT   sleep <INT> seconds after scanning before
                      getting \`wpa_cli scan_results\`
 
-Either roam directly to a specified BSSID...
-   \$ roam 'f4:92:bf:70:0d:6e'
-
-...or use a command above. If no options are specified, runs with
-default:
+If no options are specified, runs with default:
    \$ roam auto --wait 5
 
 EOF
 exit "$1"
+}
+
+
+function _sleep {
+   local -i duration="$1"
+
+   while (( duration )) ; do
+      printf '\rwaiting: %d '  "$duration"
+      (( --duration )) ; sleep 1
+   done
+
+   printf '\n'
 }
 
 
@@ -63,8 +71,10 @@ function wpa_scan {
 
    if (( __force || early_count < 2 )) ; then
       # Don't currently know a better option than just sleeping while waiting
-      # for results.
-      sudo wpa_cli scan >/dev/null ; sleep "$__wait"
+      # for results. Doesn't seem to set any PID/process or something I can
+      # `wait` for. 5s seems to be a sufficient default to consistently have
+      # results ready.
+      sudo wpa_cli scan >/dev/null ; _sleep "$__wait"
    fi
 
    mapfile -t LINES < <(
@@ -94,45 +104,13 @@ function pretty_lines {
 #                                   commands
 #-------------------------------------------------------------------------------
 function cmd_list {
-   while (( $# )) ; do
-      case "$1" in
-         -f | --force)
-               shift ; __force=1
-               ;;
-
-         -w | --wait)
-               shift ; __wait="$1" ; shift
-
-               ;;
-         *)    printf 'Command `list` not expecting parameter [%s].'  "$1" >&2
-               ;;
-      esac
-   done
-
    wpa_scan
    pretty_lines
-
    printf '%s\n' "${LINES[@]}"
 }
 
 
 function cmd_select {
-   while (( $# )) ; do
-      case "$1" in
-         -f | --force)
-               shift ; __force=1
-               ;;
-
-         -w | --wait)
-               shift ; __wait="$1" ; shift
-
-               ;;
-         *)    printf 'Command `list` not expecting parameter [%s].'  "$1" >&2
-               exit 1
-               ;;
-      esac
-   done
-
    wpa_scan
 
    local bssid
@@ -145,22 +123,6 @@ function cmd_select {
 
 
 function cmd_rofi {
-   while (( $# )) ; do
-      case "$1" in
-         -f | --force)
-               shift ; __force=1
-               ;;
-
-         -w | --wait)
-               shift ; __wait="$1" ; shift
-               ;;
-
-         *)    printf 'Command `list` not expecting parameter [%s].'  "$1" >&2
-               exit 1
-               ;;
-      esac
-   done
-
    wpa_scan
    pretty_lines
 
@@ -175,47 +137,29 @@ function cmd_rofi {
 
 
 function cmd_auto {
-   while (( $# )) ; do
-      case "$1" in
-         -f | --force)
-               shift ; __force=1
-               ;;
-
-         -w | --wait)
-               shift ; __wait="$1" ; shift
-               ;;
-
-         *)    printf 'Command `auto` not expecting parameter [%s].'  "$1" >&2
-               exit 1
-               ;;
-      esac
-   done
-
    wpa_scan
    awk '{print $1}' <<< "${LINES[0]}" | xargs sudo wpa_cli roam
+}
+
+
+function cmd_current {
+   echo "$WAP"
 }
 
 
 #                               argument parsing
 #-------------------------------------------------------------------------------
 # Flags
-declare -gi __wait=7       # Seconds before `wpa_cli scan_results`
-declare -gi __force=0      # Force re-scan, even if results are avilable
-declare -gi __current=0    # Boolean. Display currently connected WAP?
+declare -gi __wait=7             # Seconds before `wpa_cli scan_results`
+declare -gi __force=0            # Force re-scan, even if results are avilable
+declare -gi __noninteractive=0   # Don't print interactive sleep text
 
-
-# No args -- default to `select`.
+# No args -- default to `auto`.
 if (( ! $# )) ; then
-   # Shellcheck wants me to pass arguments to the function, even though it
-   # intrinsically does not take any when invoked this way.
-   # shellcheck disable=SC2119
    cmd_auto ; exit $?
 fi
 
-
-declare -a opts=(
-   '-h'
-   '--help'
+declare -a autocomplete=(
    'help'
    'select'
    'list'
@@ -224,26 +168,53 @@ declare -a opts=(
    'current'
 )
 
-mapfile -t choices < <(
-   compgen -W "${opts[*]}" -- "$1"
-)
+declare -a auto_opts=()
+declare -- cmd=''
 
-if (( ${#choices[@]} == 1)) ; then
-   set -- "${choices[0]}"  "${@:2}"
+while (( $# )) ; do
+   case "$1" in
+      list)    shift ; cmd=cmd_list     ;;
+      rofi)    shift ; cmd=cmd_rofi     ;;
+      auto)    shift ; cmd=cmd_auto     ;;
+      select)  shift ; cmd=cmd_select   ;;
+      current) shift ; cmd=cmd_current  ;;
+
+      -h | --help | help)
+               usage 0
+               ;;
+
+      -f | --force)
+               shift ; __force=1
+               ;;
+
+      -w | --wait)
+               shift ; __wait="$1" ; shift
+               if (( __wait < 0 )) ; then
+                  printf 'Value for --wait must be >= 0.\n' >&2
+                  exit 1
+               fi
+               ;;
+
+      -*)      printf 'Unexpected option [%s].\n'  "$1" >&2
+               usage 1
+               ;;
+
+      *)       mapfile -t auto_opts < <(
+                  compgen -W "${autocomplete[*]}" -- "$1"
+               )
+
+               if (( ${#auto_opts[@]} == 1)) ; then
+                  set -- "${auto_opts[0]}"  "${@:2}"
+               else
+                  printf 'Unexpected command [%s].\n'  "$1" >&2
+                  usage 1
+               fi
+   esac
+done
+
+if [[ ! $cmd ]] ; then
+   printf 'Requires command.\n'  >&2
+   exit 1
 fi
 
-
-case "$1" in
-   list)    cmd_list    "${@:2}" ;;
-   rofi)    cmd_rofi    "${@:2}" ;;
-   auto)    cmd_auto    "${@:2}" ;;
-   select)  cmd_select  "${@:2}" ;;
-   current) echo "$WAP"          ;;
-
-   -h | --help | help)
-            usage 0
-            ;;
-
-   *)       sudo wpa_cli roam "$1"
-            ;;
-esac
+$cmd
