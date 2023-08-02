@@ -667,8 +667,8 @@ function cmd_help {
       valid["$opt"]=1
    done
 
-   # Ignore `conf help help`.
-   unset 'valid[help]'
+   # Ignore `conf help help`, `conf help --help`
+   unset 'valid[help]' 'valid[--help]'
 
    if [[ ! ${valid[${1:-_}]} ]] ; then
       { printf "(Command \`help' expecting exactly one of...\n"
@@ -690,6 +690,7 @@ fi
 
 declare -ga  possible=()
 declare -grA opts=(
+   ['--help']=1
    ['help']=1
    ['edit']=1
    ['set']=1
