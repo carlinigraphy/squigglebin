@@ -4,7 +4,7 @@
 declare -g DATA_FILE="${XDG_DATA_HOME:-${HOME}/.local/share/twce/conf}"/data
 declare -g DATA_DIR="${DATA_FILE%/*}"
 
-function _CONF_COMP_MAIN {
+function _conf_comp_main {
    local -a opts
 
    while IFS=$'\n' read -r line ; do
@@ -22,4 +22,4 @@ function _CONF_COMP_MAIN {
    COMPREPLY=( $(compgen -W "${opts[*]}" -- "${COMP_WORDS[$COMP_CWORD]}" ) )
 }
 
-complete -F _CONF_COMP_MAIN conf
+complete -F _conf_comp_main conf
