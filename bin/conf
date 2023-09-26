@@ -11,6 +11,17 @@
 #  [ ] Easy diff & rollback functionality.
 #
 #-------------------------------------------------------------------------------
+# THINKIES:
+#
+# Time for a medium grade rewrite. Things that have been annoying/unclear
+#  - 'short form edit' has proved annoying, require a `edit` subcommand first
+#  - validating database before every single operation is unnecessary
+#  - expanding every item in the database on parse is unnecessary, only need
+#    expand if it's a selected file
+#  - may have gone overboard with subcommands, try to simplify
+#  - don't think ground-up rewrite is necsessary, may for some parts
+#
+#-------------------------------------------------------------------------------
 set -e
 
 declare -gr DATA_FILE="${XDG_DATA_HOME:-${HOME}/.local/share/twce/conf}"/data

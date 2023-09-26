@@ -1,9 +1,5 @@
 #!/bin/bash
 
-fmt_opts=( "$@" )
-
-if [[ ! ${fmt_opts[@]} ]] ; then
-   fmt_opts+=( --prefix='>' )
-fi
-
-xclip -out | fmt "${fmt_opts[@]}" | xclip -in -selection clipboard
+# Binding to some keyboard shortcut through i3. More easily formatting email
+# messages when composing in a non-vim (mistake) editor.
+xclip -out | fmt --width=72 "$@" | xclip -in -selection clipboard
