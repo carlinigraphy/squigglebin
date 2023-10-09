@@ -7,7 +7,6 @@ function __conf {
    local curr="${COMP_WORDS[$COMP_CWORD]}"
    local prev="${COMP_WORDS[$COMP_CWORD-1]}"
 
-   local -a nicks=()
    local -a cmds=(
       --help
       help
@@ -25,6 +24,16 @@ function __conf {
       return
    fi
 
+   # Kinda niche case. Gives file completion in cases like:
+   #> conf set asfd ___
+   #                ^^^
+   if [[ ${COMP_WORDS[1]} == 'set' ]] &&
+      (( COMP_CWORD > 2 ))
+   then
+      COMPREPLY=( $(compgen -f -- "${curr}") )
+      return
+   fi
+
    mapfile -t possible < <(
       compgen -W "${cmds[*]}" -- "$prev"
    )
@@ -36,10 +45,14 @@ function __conf {
    if [[ $prev == help ]] ; then
       unset 'cmds[1]' 'cmds[0]'
       COMPREPLY=( $(compgen -W "${cmds[*]}" -- "${curr}") )
-   elif [[ $prev =~ (set|cd|edit|,|\.) ]] ; then
+   elif
+      (( COMP_CWORD == 2 )) &&
+      [[ $prev =~ ^(set|cd|edit|,|\.)$ ]]
+   then
+      local -a nicks=()
       local line
       while IFS=$'\n' read -r line ; do
-         [[ $line =~ ^[[:space:]]*# ]]   && continue
+         [[ $line =~ ^[[:space:]]*#   ]] && continue
          [[ $line =~ ^([^[:space:]]+) ]] && nicks+=( "${BASH_REMATCH[1]}" )
       done < "$DATA_FILE"
       COMPREPLY=( $(compgen -W "${nicks[*]}" -- "${curr}") )
