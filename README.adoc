@@ -18,16 +18,16 @@ Sometimes it's _/etc/_, oftentimes a dotfile in your homedir, other times under 
 [source,bash]
 ----
 # create entry for your ~/.bashrc
-conf bash set ~/.bashrc
+conf set bash ~/.bashrc
 
 # launch in $EDITOR
-conf bash
+conf edit bash
 
 # create group for related configs
-conf nvim.colors set ~/.config/nvim/colors/*
+conf set nvim.colors '~/.config/nvim/colors/*'
 
 # launch in $EDITOR, supplying additional arguments
-conf nvim.colors edit -O3
+conf edit nvim.colors -O3
 ----
 
 
