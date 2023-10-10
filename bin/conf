@@ -5,13 +5,6 @@
 # around.
 #
 # shellcheck disable=SC2178 #< gets confused with namerefs.
-#
-#-------------------------------------------------------------------------------
-# TODO:
-#  * This is trying to do too many things for a simple CLI tool
-#  * Remove default/implicit edit, causes too many problems
-#  * Separate `cd` from `dir` functionality
-#
 #-------------------------------------------------------------------------------
 set -e
 
@@ -296,7 +289,7 @@ function cmd_set {
 
    local nick="$1" ; shift
 
-   if (( $# < 2 )) ; then
+   if (( ! $# )) ; then
       { printf "(Command \`set' expecting path(s) to associate with "
         printf '[%s].)\n' "${nick}"
       } >&2
@@ -369,7 +362,7 @@ function cmd_edit {
    )
 
    cd "${files[0]%/*}"
-   exec $EDITOR  "${@}"  "${files[@]}"
+   exec nvim  "${@}"  "${files[@]}"
 }
 #}}}
 

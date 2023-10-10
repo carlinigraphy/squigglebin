@@ -30,8 +30,9 @@ function __conf {
    if [[ ${COMP_WORDS[1]} == 'set' ]] &&
       (( COMP_CWORD > 2 ))
    then
-      COMPREPLY=( $(compgen -f -- "${curr}") )
-      return
+      # Little hacky. Sets default `readline` completion if using `set` for path
+      # names.
+      compopt -o default ; return
    fi
 
    mapfile -t possible < <(
