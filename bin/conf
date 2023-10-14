@@ -256,7 +256,7 @@ function cmd_cd {
    # set *after* any exported variables when .bashrc is read.
    #
    # shellcheck disable=SC2016 #< intentional variable in single quotes.
-   /bin/bash --rcfile <( printf '
+   exec /bin/bash --rcfile <( printf '
       . ~/.bashrc ; export PS1="[conf] ${PS1}"
    ')
 }
