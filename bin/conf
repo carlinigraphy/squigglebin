@@ -548,5 +548,12 @@ case "$cmd" in
    '.')     cmd_edit   "${@:2}"  ;;
    ',')     cmd_cd     "${@:2}"  ;;
 
-   *)       usage 1              ;;
+   # Try defaulting to `edit' mode, maybe it's a valid $nick.
+   *)       db_load
+            if [[ ! ${DB[$1]} ]] ; then
+               usage 1
+            else
+               cmd_edit "$@"
+            fi
+            ;;
 esac
