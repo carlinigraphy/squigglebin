@@ -1,0 +1,114 @@
+#!/bin/bash
+#
+# Stack based, low-typing, directory management. Sorta like pushd/popd, but
+# different.
+
+declare -ax _DIRSTACK=()
+
+function d {
+   local -a stack=()
+
+   while (( $# )) ; do
+      case "$1" in
+         # DUP top entry on the stack.
+         d) shift
+            (( ${#_DIRSTACK[@]} )) || return 0
+            _DIRSTACK+=( "${_DIRSTACK[-1]}" )
+            ;;
+
+         # SWAP top two dirs on the stack.
+         s) shift
+            (( ${#_DIRSTACK[@]} >= 2 )) || return 1
+            _DIRSTACK+=( "${_DIRSTACK[-2]}" )
+            unset '_DIRSTACK[-3]'
+
+            _DIRSTACK=( "${_DIRSTACK[@]}" ) # patch holes
+            ;;
+
+         # PUSH cwd.
+         p) shift
+            _DIRSTACK+=( "$PWD" )
+            ;;
+
+         # ROT dirs down.
+         r) shift
+            (( ${#_DIRSTACK[@]} >= 3 )) || return 1
+            local a="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
+            local b="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
+            local c="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
+            DIRSTACK+=( "$c" "$a" "$b" )
+            ;;
+
+         # TOGGLE between the top two directories:  SWAP DUP .
+         t) shift
+            set -- s d . "$@"
+            ;;
+
+         # LIST directories on the stack.
+         l) shift
+            (( ${#_DIRSTACK[@]} )) || return 0
+
+            realpath -ms --relative-base="$PWD"  "${_DIRSTACK[@]}" \
+            | sed "s,${HOME},~," \
+            | column -t          \
+            | tac                \
+            | nl -v1
+            ;;
+
+         # CYCLE all directories upwards.
+         c) shift
+            (( ${#_DIRSTACK[@]} )) || return 0
+            _DIRSTACK=( "${_DIRSTACK[-1]}"  "${_DIRSTACK[@]::${#_DIRSTACK[@]}-1}" )
+            ;;
+
+         # Pops top of stack, `cd`
+         '.')  shift
+            (( ${#_DIRSTACK[@]} )) || return 1
+            cd "${_DIRSTACK[-1]}" || return 1
+            unset '_DIRSTACK[-1]'
+            ;;
+
+         '-')  shift
+            (( ${#stack[@]} )) || return 1
+            [[ ${stack[-1]} =~ ^[[:digit:]]+$ ]] || return 1
+
+            local -i n
+            (( n = ${#_DIRSTACK[@]} - stack[-1] ))
+
+            local value="${_DIRSTACK[n]}" 
+            [[ $value ]] || return 1
+
+            _DIRSTACK+=( "$value" )
+            unset '_DIRSTACK[n]' 'stack[-1]'
+
+            _DIRSTACK=( "${_DIRSTACK[@]}" ) # patch holes
+            ;;
+
+         ??*) 
+            set -- "${1::1}" "${1:1}" "${@:2}"
+            ;;
+
+         *) stack+=( "$1" ) ; shift
+      esac
+   done
+}
+
+
+function d2 {
+   local -a stack=()
+
+   while IFS= read -sr -N1 c ; do
+      case "$c" in
+         ' ')
+            printf '%s' "$c"
+            d "${stack[@]}" ; stack=()
+            ;;
+
+         '' | ';')
+            printf '\nBYE.\n' ; break ;;
+
+         *) printf '%s' "$c"
+            stack+=( "$c" ) ; shift ;;
+      esac
+   done
+}
