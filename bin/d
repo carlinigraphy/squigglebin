@@ -6,8 +6,6 @@
 declare -ax _DIRSTACK=()
 
 function d {
-   local -a stack=()
-
    while (( $# )) ; do
       case "$1" in
          # DUP top entry on the stack.
@@ -68,27 +66,9 @@ function d {
             unset '_DIRSTACK[-1]'
             ;;
 
-         '-')  shift
-            (( ${#stack[@]} )) || return 1
-            [[ ${stack[-1]} =~ ^[[:digit:]]+$ ]] || return 1
-
-            local -i n
-            (( n = ${#_DIRSTACK[@]} - stack[-1] ))
-
-            local value="${_DIRSTACK[n]}" 
-            [[ $value ]] || return 1
-
-            _DIRSTACK+=( "$value" )
-            unset '_DIRSTACK[n]' 'stack[-1]'
-
-            _DIRSTACK=( "${_DIRSTACK[@]}" ) # patch holes
-            ;;
-
          ??*) 
             set -- "${1::1}" "${1:1}" "${@:2}"
             ;;
-
-         *) stack+=( "$1" ) ; shift
       esac
    done
 }
