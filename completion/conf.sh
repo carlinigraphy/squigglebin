@@ -1,5 +1,7 @@
 #!/bin/bash
 # vim: ft=bash tw=80
+#
+# shellcheck disable=SC2207
 
 function __conf {
    local DATA_FILE="${XDG_DATA_HOME:-${HOME}/.local/share/twce/conf}"/data
@@ -8,7 +10,6 @@ function __conf {
    local prev="${COMP_WORDS[$COMP_CWORD-1]}"
 
    local -a cmds=(
-      --help
       help
       set
       cd
@@ -40,11 +41,11 @@ function __conf {
    )
 
    if (( ${#possible[@]} == 1 )) ; then
-      prev="${possible}" 
+      prev="$possible" 
    fi
 
    if [[ $prev == help ]] ; then
-      unset 'cmds[1]' 'cmds[0]'
+      unset 'cmds[0]' # no `help help` allowed.
       COMPREPLY=( $(compgen -W "${cmds[*]}" -- "${curr}") )
    elif
       (( COMP_CWORD == 2 )) &&
