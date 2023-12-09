@@ -3,34 +3,93 @@
 # Stack based, low-typing, directory management. Sorta like pushd/popd, but
 # different.
 
-declare -ax _DIRSTACK=()
+declare -ax _DIR_STACK=()
+
+function _d_init_space {
+   local -i max height=$((
+      max    = 10,
+      height = ${#_DIR_STACK[@]} + 2,
+      (height > max) ? max : height
+   ))
+
+   local i
+   for (( i=height; i>0; --i )) ; do
+      printf '\n'
+   done
+
+   _d_cursor_to_top
+   printf '> '
+}
+
+
+function _d_reset_space {
+   _d_cursor_to_top
+
+   local -i n
+   for (( n=0; n<_DIR_HEIGHT; n++ )) ; do
+      printf '\e[1F\e[K'
+   done
+
+   printf '> '
+}
+
+
+function _d_set_dir_height {
+   local -i stack padding total
+   declare -g _DIR_HEIGHT=$((
+      height  = ${#_DIR_STACK[@]},
+      prompt  = 1,
+      padding = 1,
+      total   = height + prompt + padding,
+      (total > _DIR_MAX_LINES) ? _DIR_MAX_LINES : total
+   ))
+}
+
+
+function _d_cursor_to_top {
+   _d_cursor_to_bottom
+
+   local -i max height=$((
+      max    = 10,
+      height = ${#_DIR_STACK[@]} + 2,
+      (height > max) ? max : height
+   ))
+
+   printf '\e[%dE' "$height"
+}
+
+
+function _d_cursor_to_bottom {
+   printf '\e[10F'
+}
+
 
 function d {
    while (( $# )) ; do
       case "$1" in
          # DUP top entry on the stack.
          d) shift
-            (( ${#_DIRSTACK[@]} )) || return 0
-            _DIRSTACK+=( "${_DIRSTACK[-1]}" )
+            (( ${#_DIR_STACK[@]} )) || return 0
+            _DIR_STACK+=( "${_DIR_STACK[-1]}" )
             ;;
 
          # SWAP top two dirs on the stack.
          s) shift
-            (( ${#_DIRSTACK[@]} >= 2 )) || return 1
-            _DIRSTACK+=( "${_DIRSTACK[-2]}" )
-            unset '_DIRSTACK[-3]'
+            (( ${#_DIR_STACK[@]} >= 2 )) || return 1
+            _DIR_STACK+=( "${_DIR_STACK[-2]}" )
+            unset '_DIR_STACK[-3]'
 
-            _DIRSTACK=( "${_DIRSTACK[@]}" ) # patch holes
+            _DIR_STACK=( "${_DIR_STACK[@]}" ) # patch holes
             ;;
 
          # PUSH cwd.
          p) shift
-            _DIRSTACK+=( "$PWD" )
+            _DIR_STACK+=( "$PWD" )
             ;;
 
          # ROT dirs down.
          r) shift
-            (( ${#_DIRSTACK[@]} >= 3 )) || return 1
+            (( ${#_DIR_STACK[@]} >= 3 )) || return 1
             local a="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
             local b="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
             local c="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
@@ -44,9 +103,10 @@ function d {
 
          # LIST directories on the stack.
          l) shift
-            (( ${#_DIRSTACK[@]} )) || return 0
+            (( ${#_DIR_STACK[@]} )) || return 0
 
-            realpath -ms --relative-base="$PWD"  "${_DIRSTACK[@]}" \
+            _d_reset_space
+            realpath -ms --relative-base="$PWD"  "${_DIR_STACK[@]}" \
             | sed "s,${HOME},~," \
             | column -t          \
             | tac                \
@@ -55,15 +115,15 @@ function d {
 
          # CYCLE all directories upwards.
          c) shift
-            (( ${#_DIRSTACK[@]} )) || return 0
-            _DIRSTACK=( "${_DIRSTACK[-1]}"  "${_DIRSTACK[@]::${#_DIRSTACK[@]}-1}" )
+            (( ${#_DIR_STACK[@]} )) || return 0
+            _DIR_STACK=( "${_DIR_STACK[-1]}"  "${_DIR_STACK[@]::${#_DIR_STACK[@]}-1}" )
             ;;
 
          # Pops top of stack, `cd`
          '.')  shift
-            (( ${#_DIRSTACK[@]} )) || return 1
-            cd "${_DIRSTACK[-1]}" || return 1
-            unset '_DIRSTACK[-1]'
+            (( ${#_DIR_STACK[@]} )) || return 1
+            cd "${_DIR_STACK[-1]}" || return 1
+            unset '_DIR_STACK[-1]'
             ;;
 
          ??*) 
@@ -74,21 +134,28 @@ function d {
 }
 
 
-function d2 {
+function _d {
    local -a stack=()
+   _d_init_space
 
-   while IFS= read -sr -N1 c ; do
+   while IFS= read -srn1 c ; do
       case "$c" in
          ' ')
             printf '%s' "$c"
             d "${stack[@]}" ; stack=()
             ;;
 
+         # Ignore tabs.
+         '	') : ;;
+
          '' | ';')
             printf '\nBYE.\n' ; break ;;
 
          *) printf '%s' "$c"
-            stack+=( "$c" ) ; shift ;;
+            stack+=( "$c" ) ;;
       esac
    done
 }
+
+_DIR_STACK=( ~/.config/i3 "$PWD" ~/hg/twce/awkdoc )
+_d
