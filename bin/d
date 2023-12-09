@@ -61,14 +61,14 @@ function _d_data {
 function d0 {
    while (( $# )) ; do
       case "$1" in
-         # DUP top entry on the stack.
-         d) shift
+         d) # DUP top entry on the stack.
+            shift
             (( ${#_DIR_STACK[@]} )) || return 0
             _DIR_STACK+=( "${_DIR_STACK[-1]}" )
             ;;
 
-         # SWAP top two dirs on the stack.
-         s) shift
+         s) # SWAP top two dirs on the stack.
+            shift
             (( ${#_DIR_STACK[@]} >= 2 )) || return 1
             _DIR_STACK+=( "${_DIR_STACK[-2]}" )
             unset '_DIR_STACK[-3]'
@@ -76,50 +76,51 @@ function d0 {
             _DIR_STACK=( "${_DIR_STACK[@]}" ) # patch holes
             ;;
 
-         # PUSH cwd.
-         p) shift
+         p) # PUSH cwd.
+            shift
             _DIR_STACK+=( "$PWD" )
             ;;
 
-         # ROT dirs down.
-         r) shift
-            (( ${#_DIR_STACK[@]} >= 3 )) || return 1
-            local a="${_DIR_STACK[-1]}" ; unset '_DIR_STACK[-1]'
-            local b="${_DIR_STACK[-1]}" ; unset '_DIR_STACK[-1]'
-            local c="${_DIR_STACK[-1]}" ; unset '_DIR_STACK[-1]'
-            _DIR_STACK+=( "$c" "$a" "$b" )
+         t) # TOGGLE between the top two directories:  SWAP DUP .
+            shift
+            set -- sd,. "$@"
+            echo "$@"
             ;;
 
-         # TOGGLE between the top two directories:  SWAP DUP .
-         t) shift
-            set -- s d . "$@"
-            ;;
-
-         # LIST directories on the stack.
-         l) shift
+         l) # LIST directories on the stack.
+            shift
             (( ${#_DIR_STACK[@]} )) || return 0
             realpath -ms --relative-base="$PWD"  "${_DIR_STACK[@]::5}" \
             | sed "s,${HOME},~," \
             | column -t          \
-            | tac
+            | tac                \
+            | nl -v1
             ;;
 
-         # CYCLE all directories upwards.
-         c) shift
+         r) # ROT all directories upwards.
             (( ${#_DIR_STACK[@]} )) || return 0
-            _DIR_STACK=( "${_DIR_STACK[-1]}"  "${_DIR_STACK[@]::${#_DIR_STACK[@]}-1}" )
+            _DIR_STACK=(
+               "${_DIR_STACK[-1]}"
+               "${_DIR_STACK[@]::${#_DIR_STACK[@]}-1}"
+            )
+            cd "${_DIR_STACK[-1]}" || return 1
             ;;
 
-         # Pops top of stack, `cd`
-         '.')  shift
-            (( ${#_DIR_STACK[@]} )) || return 1
+         '.') # POP top, don't `cd`
+            shift ; unset '_DIR_STACK[-1]'
+            ;;
+
+         ',') # `cd` and don't POP
+            shift
+            (( ${#_DIR_STACK[@]} )) || continue
             cd "${_DIR_STACK[-1]}" || return 1
-            unset '_DIR_STACK[-1]'
             ;;
 
          ??*) 
             set -- "${1::1}" "${1:1}" "${@:2}"
             ;;
+
+         ';') break ;;
       esac
    done
 }
@@ -156,7 +157,7 @@ function d {
             _DIR_STACK+=( "$PWD" )
             ;;
 
-         '.') # POP top, don't CD
+         '.') # POP top, don't `cd`
             unset '_DIR_STACK[-1]'
             ;;
 
