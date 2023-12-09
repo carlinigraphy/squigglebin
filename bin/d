@@ -35,7 +35,7 @@ function _d_data {
    local d
    for d in "${_DIR_STACK[@]::5}" ; do
       lines=(
-         $(realpath -ms --relative-base="$PWD"  "$d")
+         $(realpath -ms "$d")
          "${lines[@]}"
       )
    done
@@ -49,11 +49,12 @@ function _d_data {
    printf '\e[E\e[K'
 
    local data
-   for data in "${lines[@]}" ; do       # Data block (5 lines)
+   for data in "${lines[@]/$HOME/'~'}" ; do
       printf '\e[E\e[K%s' "$data"
    done
 
-   printf '\e[6F'
+   #printf '\e[6F\e[4C%s\e[G'  "${PWD/$HOME/'~'}"
+   printf '\e[6F\e'
 }
 
 
@@ -128,7 +129,7 @@ function d {
    _d_init
    _d_data
 
-   trap _d_bye SIGINT
+   trap '_d_bye ; return 0' SIGINT
 
    local c
    while IFS= read -s -d '' -r -n1 c ; do
@@ -148,6 +149,7 @@ function d {
             unset '_DIR_STACK[-3]'
 
             _DIR_STACK=( "${_DIR_STACK[@]}" ) # patch holes
+            cd "${_DIR_STACK[-1]}" || continue
             ;;
 
          p) # PUSH cwd.
@@ -164,14 +166,14 @@ function d {
                "${_DIR_STACK[-1]}"
                "${_DIR_STACK[@]::${#_DIR_STACK[@]}-1}"
             )
+            cd "${_DIR_STACK[-1]}" || continue
             ;;
 
-         # Pops top of stack, and `cd`
+         # `cd` to top of stack
          $'\n')
             (( ${#_DIR_STACK[@]} )) || continue
             if cd "${_DIR_STACK[-1]}" ; then
                _d_bye
-               unset '_DIR_STACK[-1]'
                return 0
             fi
             ;;
@@ -184,7 +186,3 @@ function d {
       _d_data
    done
 }
-
-
-_DIR_STACK=( ~/hg/twce/conflang/build/ "$PWD" ~/.config/i3 )
-d
