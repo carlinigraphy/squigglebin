@@ -5,62 +5,35 @@
 
 declare -ax _DIR_STACK=()
 
-function _d_init_space {
-   local -i max height=$((
-      max    = 10,
-      height = ${#_DIR_STACK[@]} + 2,
-      (height > max) ? max : height
-   ))
-
-   local i
-   for (( i=height; i>0; --i )) ; do
+function _d_init {
+   for __ in {1..7} ; do
       printf '\n'
    done
-
-   _d_cursor_to_top
-   printf '> '
+   printf '\e[7F> '
 }
 
 
-function _d_reset_space {
-   _d_cursor_to_top
+# TODO: CURRENT:
+# Not entirely sure why, but the `$@` referenced in the function below is
+# somehow taking the *script's* arguments. That's literally 0% how function
+# arguments are supposed to work.
+function _d_data {
+   local -a lines=( "${@::5}" )
 
-   local -i n
-   for (( n=0; n<_DIR_HEIGHT; n++ )) ; do
-      printf '\e[1F\e[K'
+   local space
+   for (( space=(5 - $#); space>0; space-- )) ; do
+      lines+=( '' )
    done
 
-   printf '> '
-}
+   printf '\e[G\e[K'                    # Prompt
+   printf '\e[E\e[K'                    # Padding
 
+   local data
+   for data in "${lines[@]}" ; do       # Data
+      printf '\e[E\e[K%s' "$data"
+   done
 
-function _d_set_dir_height {
-   local -i stack padding total
-   declare -g _DIR_HEIGHT=$((
-      height  = ${#_DIR_STACK[@]},
-      prompt  = 1,
-      padding = 1,
-      total   = height + prompt + padding,
-      (total > _DIR_MAX_LINES) ? _DIR_MAX_LINES : total
-   ))
-}
-
-
-function _d_cursor_to_top {
-   _d_cursor_to_bottom
-
-   local -i max height=$((
-      max    = 10,
-      height = ${#_DIR_STACK[@]} + 2,
-      (height > max) ? max : height
-   ))
-
-   printf '\e[%dE' "$height"
-}
-
-
-function _d_cursor_to_bottom {
-   printf '\e[10F'
+   printf '\e[7F> '
 }
 
 
@@ -104,13 +77,10 @@ function d {
          # LIST directories on the stack.
          l) shift
             (( ${#_DIR_STACK[@]} )) || return 0
-
-            _d_reset_space
-            realpath -ms --relative-base="$PWD"  "${_DIR_STACK[@]}" \
+            realpath -ms --relative-base="$PWD"  "${_DIR_STACK[@]::5}" \
             | sed "s,${HOME},~," \
             | column -t          \
-            | tac                \
-            | nl -v1
+            | tac
             ;;
 
          # CYCLE all directories upwards.
@@ -136,26 +106,32 @@ function d {
 
 function _d {
    local -a stack=()
-   _d_init_space
+   _d_init
 
    while IFS= read -srn1 c ; do
       case "$c" in
-         ' ')
-            printf '%s' "$c"
-            d "${stack[@]}" ; stack=()
-            ;;
+         #' ')
+         #   printf '%s' "$c"
+         #   d "${stack[@]}" ; stack=()
+         #   ;;
 
-         # Ignore tabs.
-         '	') : ;;
+         p) _d_data 'this' 'that'
+            ;;
+         
+         r) _d_data ''
+            ;;
 
          '' | ';')
             printf '\nBYE.\n' ; break ;;
+
+         '	') :;; # Ignore tabs.
 
          *) printf '%s' "$c"
             stack+=( "$c" ) ;;
       esac
    done
 }
+
 
 _DIR_STACK=( ~/.config/i3 "$PWD" ~/hg/twce/awkdoc )
 _d
