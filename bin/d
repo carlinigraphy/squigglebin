@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2207
 #
 # Stack based, low-typing, directory management. Sorta like pushd/popd, but
 # different.
@@ -6,7 +7,7 @@
 # ref.
 # https://notes.burke.libbey.me/ansi-escape-codes/
 
-#declare -ax _DIR_STACK=()
+declare -ax _DIR_STACK=()
 
 function _d_init {
    for __ in {1..7} ; do
@@ -16,40 +17,43 @@ function _d_init {
 }
 
 
+function _d_bye {
+   printf '\e[G\e[K'
+
+   for __ in {1..6}; do
+      printf '\e[E\e[K'
+   done
+
+   printf '\e[6F'
+   printf 'Bye.\n'
+}
+
+
 function _d_data {
-   local -a lines=( "$@" )
-   lines=( "${lines[@]::5}" )
-   # ^^
-   # So cool story: I'm pretty certain that using array slices with "$@" in a
-   # function is undocumented, or unintended. E.g., this...
-   #> printf '[%s]\n' "${@::5}"
-   #...includes the script's $0 as the 1st parameter, followed by any arguments
-   # that are passed. So `_d_data 1 2 3` would print `d 1 2 3`. Very confusing.
-   #
-   # I can not find any references to this behavior, or using "$@" as an array
-   # (with slices, parameter expansion, n' whatnot). Seems that substitutions
-   # behave as expected, and do not prepend $0.
-   #
-   # Huh. Given:  foo 'this' 'that' ...
-   #
-   #  ${@/th/ch}   no prepended $0
-   #  ${@#th}      no prepended $0
-   #  ${@:0}          prepended $0
+   local -a lines=()
+
+   local d
+   for d in "${_DIR_STACK[@]::5}" ; do
+      lines=(
+         $(realpath -ms --relative-base="$PWD"  "$d")
+         "${lines[@]}"
+      )
+   done
 
    local space
-   for (( space=(5 - $#); space>0; space-- )) ; do
+   for (( space=(5 - ${#lines[@]}); space>0; space-- )) ; do
       lines+=( '' )
    done
 
-   printf '\e[G\e[K'                    # Prompt
-   printf '\e[E\e[K'                    # Padding
+   printf '\e[G\e[K'
+   printf '\e[E\e[K'
 
    local data
-   for data in "${lines[@]}" ; do       # Data
+   for data in "${lines[@]}" ; do       # Data block (5 lines)
       printf '\e[E\e[K%s' "$data"
    done
 
-   printf '\e[6F> '
+   printf '\e[6F'
 }
 
 
@@ -79,10 +83,10 @@ function d0 {
          # ROT dirs down.
          r) shift
             (( ${#_DIR_STACK[@]} >= 3 )) || return 1
-            local a="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
-            local b="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
-            local c="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
-            DIRSTACK+=( "$c" "$a" "$b" )
+            local a="${_DIR_STACK[-1]}" ; unset '_DIR_STACK[-1]'
+            local b="${_DIR_STACK[-1]}" ; unset '_DIR_STACK[-1]'
+            local c="${_DIR_STACK[-1]}" ; unset '_DIR_STACK[-1]'
+            _DIR_STACK+=( "$c" "$a" "$b" )
             ;;
 
          # TOGGLE between the top two directories:  SWAP DUP .
@@ -122,82 +126,65 @@ function d0 {
 
 function d {
    _d_init
+   _d_data
 
-   trap '_d_data ; printf "\n" ; return' SIGINT
+   trap _d_bye SIGINT
 
    local c
-   while IFS= read -srn1 c ; do
-      printf '%s' "$c"
-
-      local d=
-      local -a dirs=()
-      for d in "${_DIR_STACK[@]::5}" ; do
-         d=$( realpath -ms --relative-base="$PWD"  "$d" )
-         dirs=( "$d" "${dirs[@]}" )
-      done
-
-      _d_data "${dirs[@]/${HOME}/'~'}"
+   while IFS= read -s -d '' -r -n1 c ; do
+      if [[ "$c" != $'\n' ]] ; then
+         printf '\e[G\e[K %s' "$c"
+      fi
 
       case "$c" in
-         # DUP top entry on the stack.
-         d) shift
-            (( ${#_DIR_STACK[@]} )) || return 0
+         d) # DUP top entry on the stack.
+            (( ${#_DIR_STACK[@]} )) || continue
             _DIR_STACK+=( "${_DIR_STACK[-1]}" )
             ;;
-
-         # SWAP top two dirs on the stack.
-         s) shift
-            (( ${#_DIR_STACK[@]} >= 2 )) || return 1
+         
+         s) # SWAP top two dirs on the stack.
+            (( ${#_DIR_STACK[@]} >= 2 )) || continue
             _DIR_STACK+=( "${_DIR_STACK[-2]}" )
             unset '_DIR_STACK[-3]'
 
             _DIR_STACK=( "${_DIR_STACK[@]}" ) # patch holes
             ;;
 
-         # PUSH cwd.
-         p) shift
+         p) # PUSH cwd.
             _DIR_STACK+=( "$PWD" )
             ;;
 
-         # ROT dirs down.
-         r) shift
-            (( ${#_DIR_STACK[@]} >= 3 )) || return 1
-            local a="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
-            local b="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
-            local c="${DIRSTACK[-1]}" ; unset 'DIRSTACK[-1]'
-            DIRSTACK+=( "$c" "$a" "$b" )
-            ;;
-
-         # TOGGLE between the top two directories:  SWAP DUP .
-         t) shift
-            set -- s d . "$@"
-            ;;
-
-         # CYCLE all directories upwards.
-         c) shift
-            (( ${#_DIR_STACK[@]} )) || return 0
-            _DIR_STACK=( "${_DIR_STACK[-1]}"  "${_DIR_STACK[@]::${#_DIR_STACK[@]}-1}" )
-            ;;
-
-         # Pops top of stack, `cd`
-         '.')  shift
-            (( ${#_DIR_STACK[@]} )) || return 1
-            cd "${_DIR_STACK[-1]}" || return 1
+         '.') # POP top, don't CD
             unset '_DIR_STACK[-1]'
             ;;
 
-         ??*) 
-            set -- "${1::1}" "${1:1}" "${@:2}"
+         r) # ROT all directories upwards.
+            (( ${#_DIR_STACK[@]} )) || continue
+            _DIR_STACK=(
+               "${_DIR_STACK[-1]}"
+               "${_DIR_STACK[@]::${#_DIR_STACK[@]}-1}"
+            )
             ;;
 
-         '' | ';')
-            _d_data
-            printf '\nBYE.\n' ; break ;;
+         # Pops top of stack, and `cd`
+         $'\n')
+            (( ${#_DIR_STACK[@]} )) || continue
+            if cd "${_DIR_STACK[-1]}" ; then
+               _d_bye
+               unset '_DIR_STACK[-1]'
+               return 0
+            fi
+            ;;
 
-         '	') :;; # Ignore tabs.
+         # Exit on ctrl+d, escape, `;'.
+         '' | $'' | ';')
+            _d_bye ; return 0 ;;
       esac
+
+      _d_data
    done
 }
 
 
-_DIR_STACK=( ~/.config/i3 "$PWD" ~/hg/twce/awkdoc )
+_DIR_STACK=( ~/hg/twce/conflang/build/ "$PWD" ~/.config/i3 )
+d
