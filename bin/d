@@ -7,24 +7,29 @@
 # ref.
 # https://notes.burke.libbey.me/ansi-escape-codes/
 
-declare -ax _DIR_STACK=()
+# Would've liked to use $DIRSTACK, but can't modify it. Would be cool to have
+# better crossover with pushd/popd.
+declare -ax _DIRSTACK
 
 function _d_init {
-   for __ in {1..7} ; do
+   for _ in {1..7} ; do
       printf '\n'
    done
-   printf '\e[7F> '
+
+   printf '\e[7F'
+   printf '   (. pop) (s swap) (d dup) (r rot) (u undo)'
+   printf '\e[G'
 }
 
 
 function _d_bye {
-   printf '\e[G\e[K'
+   printf '\e[G\e[K'       # 0D
 
-   for __ in {1..6}; do
-      printf '\e[E\e[K'
+   for _ in {1..6}; do
+      printf '\e[E\e[K'    # j0D
    done
 
-   printf '\e[6F'
+   printf '\e[6F'          # 6k
    printf 'Bye.\n'
 }
 
@@ -33,87 +38,91 @@ function _d_data {
    local -a lines=()
 
    local d
-   for d in "${_DIR_STACK[@]::5}" ; do
+   for d in "${_DIRSTACK[@]::5}" ; do
       lines=(
          $(realpath -ms "$d")
          "${lines[@]}"
       )
    done
 
-   local space
+   local -i space
    for (( space=(5 - ${#lines[@]}); space>0; space-- )) ; do
       lines+=( '' )
    done
 
-   printf '\e[G\e[K'
-   printf '\e[E\e[K'
+   printf '\e[E' # Advance past padding.
 
    local data
    for data in "${lines[@]/$HOME/'~'}" ; do
-      printf '\e[E\e[K%s' "$data"
+      printf '\e[E\e[K%s' "$data"   # j0Di
    done
 
-   #printf '\e[6F\e[4C%s\e[G'  "${PWD/$HOME/'~'}"
-   printf '\e[6F\e'
+   printf '\e[6F\e'     # 06k
 }
 
 
-function d0 {
+function _d_usage {
+   echo '(+ push) (s swap) (- pop) (, cd) (. pop/cd)'
+}
+
+
+function d {
    while (( $# )) ; do
       case "$1" in
+         -h | --help)
+            _d_usage
+            return ;;
+
+
+         '+') # PUSH next argument
+            [[ -d "$2" ]] || return 1
+            _DIRSTACK+=( $(realpath -s "$2") )
+            shift 2
+            ;;
+
+         '-') # POP top
+            shift
+            (( ${#_DIRSTACK[@]} )) || continue
+            unset '_DIRSTACK[-1]'
+            ;;
+
+         ',') # `cd` top
+            shift
+            (( ${#_DIRSTACK[@]} )) || continue
+            cd "${_DIRSTACK[-1]}" || return $?
+            ;;
+
+         '.') # POP, `cd`
+            set -- , - "$@"
+            ;;
+
          d) # DUP top entry on the stack.
             shift
-            (( ${#_DIR_STACK[@]} )) || return 0
-            _DIR_STACK+=( "${_DIR_STACK[-1]}" )
+            (( ${#_DIRSTACK[@]} )) || return 0
+            _DIRSTACK+=( "${_DIRSTACK[-1]}" )
             ;;
 
-         s) # SWAP top two dirs on the stack.
+         s) # SWAP, `cd`
+            set -- S, "$@"
+            ;;
+
+         S) # SWAP
             shift
-            (( ${#_DIR_STACK[@]} >= 2 )) || return 1
-            _DIR_STACK+=( "${_DIR_STACK[-2]}" )
-            unset '_DIR_STACK[-3]'
+            (( ${#_DIRSTACK[@]} >= 2 )) || return 1
+            _DIRSTACK+=( "${_DIRSTACK[-2]}" )
+            unset '_DIRSTACK[-3]'
 
-            _DIR_STACK=( "${_DIR_STACK[@]}" ) # patch holes
+            _DIRSTACK=( "${_DIRSTACK[@]}" ) # patch holes
             ;;
 
-         p) # PUSH cwd.
+         r) # ROT all up
             shift
-            _DIR_STACK+=( "$PWD" )
-            ;;
-
-         t) # TOGGLE between the top two directories:  SWAP DUP .
-            shift
-            set -- sd,. "$@"
-            echo "$@"
-            ;;
-
-         l) # LIST directories on the stack.
-            shift
-            (( ${#_DIR_STACK[@]} )) || return 0
-            realpath -ms --relative-base="$PWD"  "${_DIR_STACK[@]::5}" \
-            | sed "s,${HOME},~," \
-            | column -t          \
-            | tac                \
-            | nl -v1
-            ;;
-
-         r) # ROT all directories upwards.
-            (( ${#_DIR_STACK[@]} )) || return 0
-            _DIR_STACK=(
-               "${_DIR_STACK[-1]}"
-               "${_DIR_STACK[@]::${#_DIR_STACK[@]}-1}"
+            (( ${#_DIRSTACK[@]} )) || return 0
+            _DIRSTACK=(
+               "${_DIRSTACK[-1]}"
+               "${_DIRSTACK[@]::${#_DIRSTACK[@]}-1}"
             )
-            cd "${_DIR_STACK[-1]}" || return 1
-            ;;
-
-         '.') # POP top, don't `cd`
-            shift ; unset '_DIR_STACK[-1]'
-            ;;
-
-         ',') # `cd` and don't POP
-            shift
-            (( ${#_DIR_STACK[@]} )) || continue
-            cd "${_DIR_STACK[-1]}" || return 1
+            cd "${_DIRSTACK[-1]}" || return 1
             ;;
 
          ??*) 
@@ -121,62 +130,77 @@ function d0 {
             ;;
 
          ';') break ;;
+
+         *) _d_usage
+            return ;;
       esac
    done
+
+   (( ${#_DIRSTACK[@]} )) &&      \
+   realpath                       \
+      -ms                         \
+      --relative-base="$PWD"      \
+      "${_DIRSTACK[@]::5}"        \
+   | sed "s,^\.\$,${PWD}   <-,"   \
+   | sed "s,${HOME},~,"           \
+   | column -t                    \
+   | tac
 }
 
 
-function d {
+function d- {
    _d_init
    _d_data
 
-   trap '_d_bye ; return 0' SIGINT
+   # Fix accidental pop.
+   local undo=''
 
-   local c
+   local c path
    while IFS= read -s -d '' -r -n1 c ; do
-      if [[ "$c" != $'\n' ]] ; then
-         printf '\e[G\e[K %s' "$c"
-      fi
-
       case "$c" in
          d) # DUP top entry on the stack.
-            (( ${#_DIR_STACK[@]} )) || continue
-            _DIR_STACK+=( "${_DIR_STACK[-1]}" )
+            (( ${#_DIRSTACK[@]} )) || continue
+            _DIRSTACK+=( "${_DIRSTACK[-1]}" )
             ;;
          
          s) # SWAP top two dirs on the stack.
-            (( ${#_DIR_STACK[@]} >= 2 )) || continue
-            _DIR_STACK+=( "${_DIR_STACK[-2]}" )
-            unset '_DIR_STACK[-3]'
+            (( ${#_DIRSTACK[@]} >= 2 )) || continue
+            _DIRSTACK+=( "${_DIRSTACK[-2]}" )
+            unset '_DIRSTACK[-3]'
 
-            _DIR_STACK=( "${_DIR_STACK[@]}" ) # patch holes
-            cd "${_DIR_STACK[-1]}" || continue
-            ;;
-
-         p) # PUSH cwd.
-            _DIR_STACK+=( "$PWD" )
+            _DIRSTACK=( "${_DIRSTACK[@]}" ) # patch holes
+            cd "${_DIRSTACK[-1]}" || continue
             ;;
 
          '.') # POP top, don't `cd`
-            unset '_DIR_STACK[-1]'
+            (( ${#_DIRSTACK[@]} )) || continue
+            undo="${_DIRSTACK[-1]}"
+            unset '_DIRSTACK[-1]'
             ;;
 
          r) # ROT all directories upwards.
-            (( ${#_DIR_STACK[@]} )) || continue
-            _DIR_STACK=(
-               "${_DIR_STACK[-1]}"
-               "${_DIR_STACK[@]::${#_DIR_STACK[@]}-1}"
+            (( ${#_DIRSTACK[@]} )) || continue
+            _DIRSTACK=(
+               "${_DIRSTACK[-1]}"
+               "${_DIRSTACK[@]::${#_DIRSTACK[@]}-1}"
             )
-            cd "${_DIR_STACK[-1]}" || continue
+            cd "${_DIRSTACK[-1]}" || continue
             ;;
 
+
          # `cd` to top of stack
-         $'\n')
-            (( ${#_DIR_STACK[@]} )) || continue
-            if cd "${_DIR_STACK[-1]}" ; then
+         ',' | $'\n')
+            (( ${#_DIRSTACK[@]} )) || continue
+            if cd "${_DIRSTACK[-1]}" ; then
                _d_bye
                return 0
             fi
+            ;;
+
+         u) # Undo last pop
+            [[ $undo ]] || continue
+            _DIRSTACK+=( "$undo" )
+            undo=
             ;;
 
          # Exit on ctrl+d, escape, `;'.
