@@ -103,6 +103,7 @@ function d {
             ;;
 
          s) # SWAP, `cd`
+            shift
             set -- S, "$@"
             ;;
 
@@ -136,14 +137,16 @@ function d {
       esac
    done
 
-   (( ${#_DIRSTACK[@]} )) &&      \
-   realpath                       \
-      -ms                         \
-      --relative-base="$PWD"      \
-      "${_DIRSTACK[@]::5}"        \
-   | sed "s,^\.\$,${PWD}   <-,"   \
-   | sed "s,${HOME},~,"           \
-   | column -t                    \
+   local dim=$'\e[35m'
+   local rst=$'\e[0m'
+
+   (( ${#_DIRSTACK[@]} )) &&            \
+   realpath -ms "${_DIRSTACK[@]::5}"    \
+   | sed                                \
+      -e "s,^${PWD}$,${PWD}  <-,"       \
+      -e "s,${PWD},${dim}${PWD}${rst}," \
+      -e "s,${HOME},~,"                 \
+   | column -t                          \
    | tac
 }
 
