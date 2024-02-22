@@ -8,7 +8,7 @@
 #-------------------------------------------------------------------------------
 set -e
 
-declare -gr DATA_FILE="${XDG_DATA_HOME:-${HOME}/.local/share/twce/conf}"/data
+declare -gr DATA_FILE="${XDG_DATA_HOME:-$HOME}/.local/share/twce/conf"/data
 declare -gr DATA_DIR="${DATA_FILE%/*}"
 
 mkdir -p "$DATA_DIR"
