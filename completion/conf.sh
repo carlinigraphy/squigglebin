@@ -4,7 +4,7 @@
 # shellcheck disable=SC2207
 
 function __conf {
-   local DATA_FILE="${XDG_DATA_HOME:-${HOME}/.local/share/twce/conf}"/data
+   local DATA_FILE="${XDG_DATA_HOME:-$HOME}/.local/share/twce/conf"/data
 
    local curr="${COMP_WORDS[$COMP_CWORD]}"
    local prev="${COMP_WORDS[$COMP_CWORD-1]}"
