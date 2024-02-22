@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # vim: ft=bash tw=80 foldmethod=marker foldclose=all
 #
 # Ground-up rewrite of previous `conf`. Think I can make cleaner this time
