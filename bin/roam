@@ -1,5 +1,4 @@
 #!/bin/bash
-# shellcheck disable=SC2030,SC2031,SC2016
 
 declare -A wap_bssid=(
    ['f4:92:bf:70:0d:6e']='UDM'
@@ -8,7 +7,7 @@ declare -A wap_bssid=(
    ['74:ac:b9:59:53:ed']='UAP'
 )
 
-declare -- SSID
+declare SSID
 declare -l BSSID
 
 # Output lines of `wpa_scan results`.
@@ -60,7 +59,6 @@ function _sleep {
 
 
 function wpa_scan {
-   # shellcheck disable=SC2155
    local early_results
    local -i early_count
 
@@ -152,7 +150,6 @@ function cmd_current {
 # Flags
 declare -gi __wait=7             # Seconds before `wpa_cli scan_results`
 declare -gi __force=0            # Force re-scan, even if results are avilable
-declare -gi __noninteractive=0   # Don't print interactive sleep text
 
 # No args -- default to `auto`.
 if (( ! $# )) ; then
@@ -169,7 +166,7 @@ declare -a autocomplete=(
 )
 
 declare -a auto_opts=()
-declare -- cmd=''
+declare cmd=''
 
 while (( $# )) ; do
    case "$1" in
