@@ -81,7 +81,21 @@ function new_entry {
 
 
 function db_store {
-   install --backup=numbered "$DATA_FILE"  "${DATA_DIR}/backup"
+   local -i n
+   local target
+   local base="${DATA_DIR}"/backup
+
+   ## Hmm, maybe turn this into a slightly more "clever" one-liner? Can't use
+   ## the --backup flag, as it's not included w/ the BSD `mv` or `install`
+   ## commands.
+   #while ! mv -n "$DATA_FILE" "${base}.$(( ++n ))" ; do :; done
+
+   while
+      target="${base}.$(( ++n ))" &&
+      [[ -f "$target" ]]
+   do :; done
+
+   mv "$DATA_FILE" "$target"
 
    { for nick in "${DB_ORDER[@]}" ; do
       local -n entry_r="${DB[$nick]}"
@@ -529,6 +543,7 @@ if [[ ! ${opts[$cmd]} ]] ; then
       exit 1
    fi
 
+   # shellcheck disable=SC2128
    cmd="${possible}"
 fi
 
