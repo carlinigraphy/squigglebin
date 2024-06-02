@@ -1,0 +1,55 @@
+#!/bin/bash
+
+set -e
+host senatus               # sanity check.
+read -rp 'Begin backup? '  # sanity check x2.
+
+BASE=/tidepool/backup/aurelius/romanus
+LOGFILE=$( mktemp )
+
+ARGS=(
+   --perms --times --owner
+   --recursive
+   --safe-links
+   --delete-after
+   --mkpath
+   --human-readable
+   --progress
+   --verbose
+
+   # Generic exclusions.
+   --exclude='node_modules/'
+   --exclude='venv/'
+   --exclude='site-packages/'
+   --exclude='__pycache__/'
+   --exclude='*.swp'
+)
+
+declare -A locations=(
+   [__home]='aurelius/'
+   [__config]='aurelius/.config/'
+)
+
+__home=(
+   --exclude='venv/'
+   ~/bin
+   ~/Documents
+   ~/Music
+)
+
+__config=(
+   --exclude='chromium'
+   --exclude='neomutt/cache'
+   --exclude='obsidian'
+   ~/.config
+)
+
+for section in "${!locations[@]}" ; do
+   declare -n files_r="$section"
+   dest="${locations[$section]}"
+
+   rsync "${ARGS[@]}" "${files_r[@]}" senatus:"${BASE}/${dest}" \
+      2>&1 | tee -a "$LOGFILE"
+done
+
+printf 'Logfile: %s\n' "$LOGFILE"
