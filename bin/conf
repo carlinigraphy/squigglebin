@@ -8,6 +8,12 @@
 #-------------------------------------------------------------------------------
 set -e
 
+# Should always be, be just in case bash version <4.
+if (( BASH_VERSINFO[0] < 4 )) ; then
+   printf '(Bash version must be >=4)\n'  >&2
+   exit 1
+fi
+
 declare -gr DATA_FILE="${XDG_DATA_HOME:-$HOME}/.local/share/twce/conf"/data
 declare -gr DATA_DIR="${DATA_FILE%/*}"
 
@@ -91,7 +97,7 @@ function db_store {
    #while ! mv -n "$DATA_FILE" "${base}.$(( ++n ))" ; do :; done
 
    while
-      target="${base}.$(( ++n ))" &&
+      target="${base}.~$(( ++n ))~" &&
       [[ -f "$target" ]]
    do :; done
 
@@ -436,22 +442,16 @@ function cmd_clean {
       usage_clean
    fi
 
-   # Default to 'interactive'.
-   local -a rm=( -i )
    if (( $# )) ; then
       rm=( "$@" )
    fi
 
-   local -a stat=(
-      --printf='%Y %n\n'
-      "${DATA_DIR}"/backup.~*
-   )
-
-   stat "${stat[@]}" 2>/dev/null \
+   stat --printf='%Y %n\n'       \
+       "${DATA_DIR}"/backup.~*~  \
    | sort                        \
    | cut -d' ' -f2               \
    | head --lines=-5             \
-   | xargs rm "${rm[@]}"
+   | xargs rm -v "${rm[@]}"
 }
 #}}}
 
