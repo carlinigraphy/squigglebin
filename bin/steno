@@ -1,0 +1,75 @@
+#!/bin/bash
+set -e
+
+CRAHDIR="${HOME}/hg/crah"
+SCRATCHDIR="${HOME}/Documents/steno"
+
+function steno_print {
+   local input="$1"
+
+   local fdir ; fdir=$( cd "$(dirname "$input")" && pwd )
+   local fpath="${fdir##*/}/${input##*/}"
+
+   local ctime; ctime=$( stat --printf='%w' "$input" | cut -d' ' -f1 )
+   local today; today=$( date +%Y-%m-%d )
+
+   local header="${fpath}|created:${ctime}, today:${today}|\$% of \$="
+
+   tac "$input" \
+   | awk '
+      BEGIN {
+         star = 0;
+         line = "";
+      }
+
+      { line = "|| "$0" |" }
+
+      /^[[:space:]]*\*[[:space:]]*$/ {
+         star++; print line; next;
+      }
+
+      star && /[[:alnum:]]/ {
+         star--; print line; next;
+      }
+
+      { print line "-" }'      \
+   | tac                       \
+   | enscript                  \
+      --header="$header"       \
+      --columns=2              \
+      --header-font=Courier8   \
+      --font=Courier7          \
+      --margins=0:0::          \
+      --output=-               \
+   | lp -o outputorder=reverse
+}
+
+
+case "$1" in
+   '')
+      exec nvim \
+         '+set filetype=steno' \
+         '+norm Go'            \
+         '+startinsert'        \
+         -- "${SCRATCHDIR}/$(date +%Y-%m-%d)"
+      ;;
+
+   'print')
+      shift ; steno_print "$1"
+      ;;
+
+   'cd')
+      if ! cd "${CRAHDIR}" 2>/dev/null; then
+         { printf "(Cannot \`cd' to\n"
+           printf "  '%s'\n"  "${CRAHDIR}"
+           printf ')\n'
+         } >&2
+         exit 1
+      fi
+
+      # shellcheck disable=SC2016 #< "variable" in single quotes
+      exec /bin/bash --rcfile <( printf '
+         . ~/.bashrc ; export PS1="[steno] ${PS1}"
+      ')
+      ;;
+esac
