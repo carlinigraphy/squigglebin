@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-CRAHDIR="${HOME}/hg/crah"
-SCRATCHDIR="${HOME}/Documents/steno"
+STENO_DIR="${HOME}/hg/steno"
+SCRATCH_DIR="${HOME}/Documents/steno"
 
 function steno_print {
    local input="$1"
@@ -47,11 +47,11 @@ function steno_print {
 
 case "$1" in
    '')
-      exec nvim \
-         '+set filetype=steno' \
-         '+norm Go'            \
-         '+startinsert'        \
-         -- "${SCRATCHDIR}/$(date +%Y-%m-%d)"
+      exec nvim                            \
+         '+norm Go'                        \
+         '+startinsert'                    \
+         '+set filetype=steno_translation' \
+         -- "${SCRATCH_DIR}/$(date +%Y-%m-%d)"
       ;;
 
    'print')
@@ -59,9 +59,9 @@ case "$1" in
       ;;
 
    'cd')
-      if ! cd "${CRAHDIR}" 2>/dev/null; then
+      if ! cd "${STENO_DIR}" 2>/dev/null; then
          { printf "(Cannot \`cd' to\n"
-           printf "  '%s'\n"  "${CRAHDIR}"
+           printf "  '%s'\n"  "${STENO_DIR}"
            printf ')\n'
          } >&2
          exit 1
