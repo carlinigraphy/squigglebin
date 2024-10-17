@@ -174,9 +174,9 @@ function db_validate {
    done
 
    if (( ${#unfound[@]} )) ; then
-      { printf '(Does exist, or is not file:\n'
-         printf "  '%s'\n"  "${unfound[@]}"
-         printf ')\n'
+      { printf '(Does not exist, or is not file:\n'
+        printf "  '%s'\n"  "${unfound[@]}"
+        printf ')\n'
       } >&2
    fi
 

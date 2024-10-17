@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-CRAHDIR="${HOME}/hg/crah"
-SCRATCHDIR="${HOME}/Documents/steno"
+STENO_DIR="${HOME}/hg/steno"
+SCRATCH_DIR="${HOME}/Documents/steno"
+CURRENT_LESSON=$(<"${STENO_DIR}/.current-lesson")
 
 function steno_print {
    local input="$1"
@@ -51,7 +52,7 @@ case "$1" in
          '+set filetype=steno' \
          '+norm Go'            \
          '+startinsert'        \
-         -- "${SCRATCHDIR}/$(date +%Y-%m-%d)"
+         -- "${SCRATCH_DIR}/$(date +%Y-%m-%d)"
       ;;
 
    'print')
@@ -59,17 +60,44 @@ case "$1" in
       ;;
 
    'cd')
-      if ! cd "${CRAHDIR}" 2>/dev/null; then
+      dir="${STENO_DIR}/lesson_notes/lesson_${CURRENT_LESSON}"
+      if ! cd "${dir}" 2>/dev/null; then
          { printf "(Cannot \`cd' to\n"
-           printf "  '%s'\n"  "${CRAHDIR}"
-           printf ')\n'
+           printf "  '%s'\n"  "${dir}"
+           printf 'Perhaps .current-lesson set wrong?)\n'
          } >&2
          exit 1
       fi
 
       # shellcheck disable=SC2016 #< "variable" in single quotes
       exec /bin/bash --rcfile <( printf '
-         . ~/.bashrc ; export PS1="[steno] ${PS1}"
+         . ~/.bashrc ; export PS1="[steno] ${PS1}" ; ls -l
       ')
       ;;
+
+   'edit')
+      shift
+
+      declare -a p=(
+         +'setf steno_raw'
+         +'norm gg'
+         # Scroll to top of raw file, so scrollbind doesn't have an offset. If
+         # you've previously editted a line half way down, the LHS file will
+         # resume editing there, while the RHS file opens at the top. Oops.
+
+         +'vert split | b .steno_translation | vert 1res 28'
+         # Need to pipe edit, or scrollbind is unset. See  :help scrollbind.
+      )
+
+      exec nvim "${p[@]}" "${1?}" "${1/.txt/.steno_translation}"
+      ;;
+
+   ## Had the idea to use archives for a .stenor & .stenot file. Wrap vim
+   ## commands to automatially open in a split for editing. Maybe not though.
+   #
+   #'new')
+   #   shift ; name="$1"
+   #   touch "${name}".{stenor,stenot}
+   #   tar --directory="$(dirname "$1")" -cfz "$name" "${name}".{stenor,stenot}
+   #   ;;
 esac
