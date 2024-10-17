@@ -48,10 +48,10 @@ function steno_print {
 
 case "$1" in
    '')
-      exec nvim \
-         '+set filetype=steno' \
-         '+norm Go'            \
-         '+startinsert'        \
+      exec nvim                            \
+         '+norm Go'                        \
+         '+startinsert'                    \
+         '+set filetype=steno_translation' \
          -- "${SCRATCH_DIR}/$(date +%Y-%m-%d)"
       ;;
 
