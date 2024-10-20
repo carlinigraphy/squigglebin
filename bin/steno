@@ -47,14 +47,12 @@ function steno_print {
 
 
 function steno_grep {
-   local grep="$1" ; shift
    local params=( "$@" )
-
    local dict_dir="$STENO_DIR"/dictionaries
 
-   "$grep" \
+   rg \
       --color=always        \
-      -E "${params[@]}"     \
+      "${params[@]}"        \
       "$dict_dir"/CRAH.rtf  \
       "$dict_dir"/mine.json \
    | awk \
@@ -77,7 +75,7 @@ case "$1" in
       ;;
 
    'rg' | 'grep')
-      steno_grep "$@"
+      shift ; steno_grep "$@"
       ;;
 
    'cd')
