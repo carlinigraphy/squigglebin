@@ -46,6 +46,23 @@ function steno_print {
 }
 
 
+function steno_grep {
+   local grep="$1" ; shift
+   local params=( "$@" )
+
+   local dict_dir="$STENO_DIR"/dictionaries
+
+   "$grep" \
+      --color=always        \
+      -E "${params[@]}"     \
+      "$dict_dir"/CRAH.rtf  \
+      "$dict_dir"/mine.json \
+   | awk \
+      -v DICTS="${dict_dir}/" \
+      '{sub(DICTS, "") ; print}'
+}
+
+
 case "$1" in
    '')
       exec nvim                            \
@@ -57,6 +74,10 @@ case "$1" in
 
    'print')
       shift ; steno_print "$1"
+      ;;
+
+   'rg' | 'grep')
+      steno_grep "$@"
       ;;
 
    'cd')

@@ -9,6 +9,8 @@ function __steno {
       cd
       edit
       print
+      grep
+      rg
    )
 
    if (( COMP_CWORD == 1 )) ; then
