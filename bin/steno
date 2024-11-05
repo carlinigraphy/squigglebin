@@ -104,7 +104,7 @@ case "$1" in
          # you've previously editted a line half way down, the LHS file will
          # resume editing there, while the RHS file opens at the top. Oops.
 
-         +'vert split | b .steno_translation | vert 1res 28'
+         +'vert split | b .steno_translation | vert 1res 23'
          # Need to pipe edit, or scrollbind is unset. See  :help scrollbind.
       )
 
